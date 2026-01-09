@@ -56,22 +56,14 @@ resource "aws_iam_role_policy_attachment" "cloudwatch" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# Custom IAM policy for additional permissions
+# Custom IAM policy for CloudWatch Logs
 resource "aws_iam_policy" "ec2_custom" {
   name        = "${var.environment}-asg-ec2-custom-policy"
-  description = "Custom policy for ASG EC2 instances"
+  description = "Custom policy for ASG EC2 instances - CloudWatch Logs only"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = "*"
-      },
       {
         Effect = "Allow"
         Action = [
@@ -80,7 +72,10 @@ resource "aws_iam_policy" "ec2_custom" {
           "logs:PutLogEvents",
           "logs:DescribeLogStreams"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          "arn:aws:logs:*:*:log-group:/aws/ec2/${var.environment}/*",
+          "arn:aws:logs:*:*:log-group:WebServer/${var.environment}/*"
+        ]
       }
     ]
   })
@@ -116,6 +111,7 @@ resource "aws_iam_instance_profile" "ec2" {
 }
 
 # Security Group for ALB
+#checkov:skip=CKV_AWS_260:Port 80 is intentionally open for HTTP to HTTPS redirect - all HTTP traffic is immediately redirected to HTTPS (301)
 resource "aws_security_group" "alb" {
   name        = "${var.environment}-alb-sg"
   description = "Security group for Application Load Balancer"

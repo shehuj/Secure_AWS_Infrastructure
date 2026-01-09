@@ -251,7 +251,10 @@ resource "aws_iam_role_policy" "vpc_flow_logs" {
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams"
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:logs:*:*:log-group:/aws/vpc/${var.environment}-flow-logs",
+          "arn:aws:logs:*:*:log-group:/aws/vpc/${var.environment}-flow-logs:*"
+        ]
       }
     ]
   })
