@@ -212,5 +212,23 @@ resource "aws_instance" "web" {
 
   lifecycle {
     create_before_destroy = true
+
+    # Prevent accidental destruction in production
+    prevent_destroy = false # Set to true in production
+
+    # Ignore changes to these attributes to maintain idempotency
+    ignore_changes = [
+      # Ignore AMI changes to prevent unnecessary replacements
+      # Update AMI through planned maintenance windows
+      ami,
+      # Ignore user_data changes after initial creation
+      # Use Ansible for configuration changes
+      user_data,
+      user_data_base64,
+      # Ignore tags that may be added by AWS or other tools
+      tags["Created"],
+      tags["Modified"],
+      volume_tags["Created"]
+    ]
   }
 }

@@ -17,6 +17,7 @@
         update_cache: yes
       register: yum_update
       failed_when: false
+      changed_when: yum_update.changed and yum_update.results | length > 0
 
     - name: Install required packages
       yum:
@@ -28,13 +29,15 @@
           - curl
         state: present
 
-    - name: Install AWS CLI
+    - name: Install AWS CLI and Python packages
       pip:
         name:
           - awscli
           - boto3
         state: present
         executable: pip3
+      register: pip_install
+      changed_when: pip_install.changed
 
     - name: Ensure nginx is stopped before configuration
       systemd:
@@ -49,6 +52,11 @@
         owner: nginx
         group: nginx
         mode: '0755'
+
+    - name: Check if custom index page exists
+      stat:
+        path: "{{ app_directory }}/index.html"
+      register: index_file
 
     - name: Deploy custom index page
       copy:
@@ -194,8 +202,12 @@
       uri:
         url: "http://localhost:{{ nginx_port }}/health"
         return_content: yes
+        status_code: 200
       register: health_check
       failed_when: health_check.content != "OK\n"
+      changed_when: false  # Health checks don't change anything
+      retries: 3
+      delay: 2
 
     - name: Display deployment status
       debug:

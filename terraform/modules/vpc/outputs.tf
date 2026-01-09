@@ -25,12 +25,12 @@ output "nat_gateway_ids" {
 
 output "internet_gateway_id" {
   description = "ID of the Internet Gateway"
-  value       = try(aws_internet_gateway.main[0].id, "")
+  value       = aws_internet_gateway.main.id
 }
 
 output "public_route_table_id" {
   description = "ID of the public route table"
-  value       = try(aws_route_table.public[0].id, "")
+  value       = aws_route_table.public.id
 }
 
 output "private_route_table_ids" {

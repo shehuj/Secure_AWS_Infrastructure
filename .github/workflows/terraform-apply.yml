@@ -19,9 +19,15 @@ on:
           - prod
 
 permissions:
-  id-token: write
   contents: read
   issues: write
+
+env:
+    TF_IN_AUTOMATION: true
+    AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
   plan:
@@ -38,13 +44,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-          role-session-name: GitHubActions-TerraformApply
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -68,13 +67,16 @@ jobs:
           name: tfplan-apply
           path: terraform/tfplan
           retention-days: 1
+          if-no-files-found: warn
 
       - name: Upload Plan Output
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-apply-text
           path: terraform/tfplan.txt
           retention-days: 5
+          if-no-files-found: warn
 
   apply:
     name: Apply Infrastructure Changes
@@ -91,13 +93,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-          role-session-name: GitHubActions-TerraformApply
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

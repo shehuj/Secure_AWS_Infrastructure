@@ -180,7 +180,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ]
             view    = "timeSeries"
             stacked = false
-            region  = data.aws_region.current.name
+            region  = data.aws_region.current.id
             title   = "EC2 CPU Utilization"
             period  = 300
           }
@@ -196,7 +196,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ]
             view    = "timeSeries"
             stacked = false
-            region  = data.aws_region.current.name
+            region  = data.aws_region.current.id
             title   = "Network In"
             period  = 300
           }
@@ -212,7 +212,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ]
             view    = "timeSeries"
             stacked = false
-            region  = data.aws_region.current.name
+            region  = data.aws_region.current.id
             title   = "Network Out"
             period  = 300
           }
@@ -230,7 +230,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ]
             view    = "timeSeries"
             stacked = false
-            region  = data.aws_region.current.name
+            region  = data.aws_region.current.id
             title   = "Memory Utilization"
             period  = 300
           }
@@ -248,7 +248,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ]
             view    = "timeSeries"
             stacked = false
-            region  = data.aws_region.current.name
+            region  = data.aws_region.current.id
             title   = "Disk Utilization"
             period  = 300
           }
