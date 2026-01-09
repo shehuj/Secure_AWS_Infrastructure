@@ -193,7 +193,7 @@ variable "create_dashboard" {
 variable "acm_certificate_arn" {
   description = "ARN of ACM certificate for main ALB HTTPS listener"
   type        = string
-  default = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
+  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
 
 }
 
@@ -201,7 +201,7 @@ variable "acm_certificate_arn" {
 variable "ghost_certificate_arn" {
   description = "ARN of ACM certificate for Ghost blog ALB HTTPS listener"
   type        = string
-  default = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
+  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
 }
 
 variable "ghost_domain_name" {
