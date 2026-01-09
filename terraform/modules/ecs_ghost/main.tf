@@ -136,7 +136,6 @@ resource "aws_security_group" "ghost_alb" {
   name        = "${var.environment}-ghost-alb-sg"
   description = "Security group for Ghost Application Load Balancer"
   vpc_id      = var.vpc_id
-
   ingress {
     description = "HTTPS from internet"
     from_port   = 443
