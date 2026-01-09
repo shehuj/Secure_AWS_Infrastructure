@@ -214,7 +214,7 @@ resource "aws_instance" "web" {
     create_before_destroy = true
 
     # Prevent accidental destruction in production
-    prevent_destroy = false  # Set to true in production
+    prevent_destroy = false # Set to true in production
 
     # Ignore changes to these attributes to maintain idempotency
     ignore_changes = [

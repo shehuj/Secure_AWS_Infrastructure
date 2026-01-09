@@ -24,7 +24,7 @@ resource "aws_vpc" "main" {
 
   lifecycle {
     # Prevent accidental destruction of VPC
-    prevent_destroy = false  # Set to true in production
+    prevent_destroy = false # Set to true in production
     # Ignore changes to tags added by AWS or other tools
     ignore_changes = [
       tags["Created"],

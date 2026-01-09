@@ -18,18 +18,18 @@ module "vpc" {
 module "ec2" {
   source = "./modules/ec2"
 
-  vpc_id               = module.vpc.vpc_id
-  subnet_ids           = module.vpc.public_subnet_ids
-  key_pair             = var.key_pair_name
-  instance_type        = var.instance_type
-  instance_count       = var.instance_count
-  environment          = var.environment
-  allowed_ssh_cidr     = var.allowed_ssh_cidr
-  allowed_http_cidr    = var.allowed_http_cidr
-  allowed_https_cidr   = var.allowed_https_cidr
-  enable_public_ip     = var.enable_public_ip
-  root_volume_size     = var.root_volume_size
-  root_volume_type     = var.root_volume_type
+  vpc_id             = module.vpc.vpc_id
+  subnet_ids         = module.vpc.public_subnet_ids
+  key_pair           = var.key_pair_name
+  instance_type      = var.instance_type
+  instance_count     = var.instance_count
+  environment        = var.environment
+  allowed_ssh_cidr   = var.allowed_ssh_cidr
+  allowed_http_cidr  = var.allowed_http_cidr
+  allowed_https_cidr = var.allowed_https_cidr
+  enable_public_ip   = var.enable_public_ip
+  root_volume_size   = var.root_volume_size
+  root_volume_type   = var.root_volume_type
 
   tags = var.tags
 }
@@ -38,17 +38,17 @@ module "ec2" {
 module "monitoring" {
   source = "./modules/monitoring"
 
-  environment             = var.environment
-  instance_ids            = module.ec2.instance_ids
-  log_retention_days      = var.log_retention_days
-  create_sns_topic        = var.create_sns_topic
-  alarm_email_endpoints   = var.alarm_email_endpoints
-  cpu_threshold           = var.cpu_threshold
-  memory_threshold        = var.memory_threshold
-  disk_threshold          = var.disk_threshold
+  environment              = var.environment
+  instance_ids             = module.ec2.instance_ids
+  log_retention_days       = var.log_retention_days
+  create_sns_topic         = var.create_sns_topic
+  alarm_email_endpoints    = var.alarm_email_endpoints
+  cpu_threshold            = var.cpu_threshold
+  memory_threshold         = var.memory_threshold
+  disk_threshold           = var.disk_threshold
   enable_memory_monitoring = var.enable_memory_monitoring
   enable_disk_monitoring   = var.enable_disk_monitoring
-  create_dashboard        = var.create_dashboard
+  create_dashboard         = var.create_dashboard
 
   tags = var.tags
 
@@ -59,11 +59,11 @@ module "monitoring" {
 module "github_oidc" {
   source = "./modules/oidc_role"
 
-  repo                    = var.github_repo
-  role_name               = "${var.environment}-GitHubActionsRole"
-  github_repositories     = ["repo:${var.github_repo}:*"]
-  environment             = var.environment
-  terraform_state_bucket  = var.terraform_state_bucket
-  terraform_lock_table    = var.terraform_lock_table
-  attach_readonly_policy  = false
+  repo                   = var.github_repo
+  role_name              = "${var.environment}-GitHubActionsRole"
+  github_repositories    = ["repo:${var.github_repo}:*"]
+  environment            = var.environment
+  terraform_state_bucket = var.terraform_state_bucket
+  terraform_lock_table   = var.terraform_lock_table
+  attach_readonly_policy = false
 }
