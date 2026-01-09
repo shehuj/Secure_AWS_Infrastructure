@@ -21,6 +21,7 @@ variable "tags" {
 variable "github_repo" {
   description = "GitHub repository for OIDC trust (format: owner/repo)"
   type        = string
+  default     = "shehuj/Secure_AWS_Infrastructure"
 }
 
 variable "terraform_state_bucket" {
