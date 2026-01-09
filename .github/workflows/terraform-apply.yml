@@ -2,23 +2,169 @@ name: Terraform Apply
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
 
 jobs:
-  deploy:
+  plan:
+    name: Create Plan for Apply
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+    environment:
+      name: ${{ github.event.inputs.environment || 'prod' }}
+    defaults:
+      run:
+        working-directory: ./terraform
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          role-session-name: GitHubActions-TerraformApply
 
-      - uses: hashicorp/setup-terraform@v3
-      - run: terraform init -input=false
-      - run: terraform apply -auto-approve
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -input=false -no-color -out=tfplan -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
+          terraform show -no-color tfplan > tfplan.txt
+        continue-on-error: true
+
+      - name: Upload Plan for Apply
+        if: steps.plan.outputs.exitcode == 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-apply
+          path: terraform/tfplan
+          retention-days: 1
+
+      - name: Upload Plan Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-apply-text
+          path: terraform/tfplan.txt
+          retention-days: 5
+
+  apply:
+    name: Apply Infrastructure Changes
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.plan_exitcode == 2
+    environment:
+      name: ${{ github.event.inputs.environment || 'prod' }}
+      url: ${{ steps.apply.outputs.url }}
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          role-session-name: GitHubActions-TerraformApply
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-apply
+          path: terraform/
+
+      - name: Terraform Apply
+        id: apply
+        run: |
+          terraform apply -input=false -no-color tfplan
+          echo "url=https://console.aws.amazon.com/vpc" >> $GITHUB_OUTPUT
+
+      - name: Get Terraform Outputs
+        id: outputs
+        run: |
+          echo "instance_ips=$(terraform output -json web_public_ips)" >> $GITHUB_OUTPUT
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Create deployment summary
+        run: |
+          echo "## Terraform Apply Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Infrastructure Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **VPC ID**: \`${{ steps.outputs.outputs.vpc_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance IPs**: \`${{ steps.outputs.outputs.instance_ips }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Run Ansible deployment workflow" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify instances are healthy" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check CloudWatch dashboard" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Notify on Status
+    runs-on: ubuntu-latest
+    needs: [plan, apply]
+    if: always()
+
+    steps:
+      - name: Create status comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const applyStatus = '${{ needs.apply.result }}';
+            const planExitcode = '${{ needs.plan.outputs.plan_exitcode }}';
+
+            let message = '';
+            if (planExitcode == 0) {
+              message = '✅ No infrastructure changes detected.';
+            } else if (applyStatus === 'success') {
+              message = '✅ Terraform apply completed successfully!';
+            } else if (applyStatus === 'failure') {
+              message = '❌ Terraform apply failed. Please check the logs.';
+            } else if (applyStatus === 'cancelled') {
+              message = '⚠️ Terraform apply was cancelled.';
+            } else {
+              message = '⚠️ Terraform apply was skipped (no changes to apply).';
+            }
+
+            console.log(message);

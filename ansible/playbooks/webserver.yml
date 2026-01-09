@@ -1,0 +1,215 @@
+---
+- name: Configure Web Servers
+  hosts: aws_ec2
+  become: yes
+  gather_facts: yes
+
+  vars:
+    nginx_port: 80
+    nginx_ssl_port: 443
+    app_directory: /var/www/html
+
+  tasks:
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+      register: yum_update
+      failed_when: false
+
+    - name: Install required packages
+      yum:
+        name:
+          - nginx
+          - python3-pip
+          - git
+          - wget
+          - curl
+        state: present
+
+    - name: Install AWS CLI
+      pip:
+        name:
+          - awscli
+          - boto3
+        state: present
+        executable: pip3
+
+    - name: Ensure nginx is stopped before configuration
+      systemd:
+        name: nginx
+        state: stopped
+      ignore_errors: yes
+
+    - name: Create application directory
+      file:
+        path: "{{ app_directory }}"
+        state: directory
+        owner: nginx
+        group: nginx
+        mode: '0755'
+
+    - name: Deploy custom index page
+      copy:
+        dest: "{{ app_directory }}/index.html"
+        content: |
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Secure AWS Infrastructure</title>
+              <style>
+                  body {
+                      font-family: Arial, sans-serif;
+                      margin: 0;
+                      padding: 0;
+                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      display: flex;
+                      justify-content: center;
+                      align-items: center;
+                      min-height: 100vh;
+                  }
+                  .container {
+                      background: white;
+                      padding: 2rem;
+                      border-radius: 10px;
+                      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                      text-align: center;
+                      max-width: 600px;
+                  }
+                  h1 {
+                      color: #667eea;
+                      margin-bottom: 1rem;
+                  }
+                  .info {
+                      background: #f7f7f7;
+                      padding: 1rem;
+                      border-radius: 5px;
+                      margin-top: 1rem;
+                  }
+                  .status {
+                      color: #28a745;
+                      font-weight: bold;
+                  }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Secure AWS Infrastructure</h1>
+                  <p class="status">✓ Server is running successfully!</p>
+                  <div class="info">
+                      <p><strong>Hostname:</strong> {{ ansible_hostname }}</p>
+                      <p><strong>Private IP:</strong> {{ ansible_default_ipv4.address }}</p>
+                      <p><strong>Environment:</strong> Production</p>
+                      <p><strong>Deployed:</strong> {{ ansible_date_time.iso8601 }}</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        owner: nginx
+        group: nginx
+        mode: '0644'
+
+    - name: Deploy health check endpoint
+      copy:
+        dest: "{{ app_directory }}/health"
+        content: "OK"
+        owner: nginx
+        group: nginx
+        mode: '0644'
+
+    - name: Configure nginx
+      copy:
+        dest: /etc/nginx/nginx.conf
+        content: |
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log warn;
+          pid /run/nginx.pid;
+
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              include /etc/nginx/mime.types;
+              default_type application/octet-stream;
+
+              log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                            '$status $body_bytes_sent "$http_referer" '
+                            '"$http_user_agent" "$http_x_forwarded_for"';
+
+              access_log /var/log/nginx/access.log main;
+
+              sendfile on;
+              tcp_nopush on;
+              tcp_nodelay on;
+              keepalive_timeout 65;
+              types_hash_max_size 2048;
+              server_tokens off;
+
+              # Security headers
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header X-XSS-Protection "1; mode=block" always;
+
+              server {
+                  listen {{ nginx_port }} default_server;
+                  listen [::]:{{ nginx_port }} default_server;
+                  server_name _;
+                  root {{ app_directory }};
+                  index index.html;
+
+                  location / {
+                      try_files $uri $uri/ =404;
+                  }
+
+                  location /health {
+                      access_log off;
+                      return 200 "OK\n";
+                      add_header Content-Type text/plain;
+                  }
+              }
+          }
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart nginx
+
+    - name: Ensure nginx is enabled and started
+      systemd:
+        name: nginx
+        enabled: yes
+        state: started
+
+    - name: Wait for nginx to be ready
+      wait_for:
+        port: "{{ nginx_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Test nginx is responding
+      uri:
+        url: "http://localhost:{{ nginx_port }}/health"
+        return_content: yes
+      register: health_check
+      failed_when: health_check.content != "OK\n"
+
+    - name: Display deployment status
+      debug:
+        msg: |
+          ========================================
+          Deployment completed successfully!
+          Server: {{ ansible_hostname }}
+          IP: {{ ansible_default_ipv4.address }}
+          Health Check: {{ health_check.status }} OK
+          ========================================
+
+  handlers:
+    - name: Restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        daemon_reload: yes
