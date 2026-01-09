@@ -3,10 +3,43 @@ variable "environment" {
   type        = string
 }
 
-variable "instance_ids" {
-  description = "List of EC2 instance IDs to monitor"
-  type        = list(string)
-  default     = []
+# Old variable - replaced by ASG/ALB/ECS metrics
+# variable "instance_ids" {
+#   description = "List of EC2 instance IDs to monitor"
+#   type        = list(string)
+#   default     = []
+# }
+
+# ASG/ALB Variables
+variable "asg_name" {
+  description = "Name of the Auto Scaling Group to monitor"
+  type        = string
+  default     = ""
+}
+
+variable "alb_arn_suffix" {
+  description = "ARN suffix of the ALB for CloudWatch metrics"
+  type        = string
+  default     = ""
+}
+
+variable "target_group_arn_suffix" {
+  description = "ARN suffix of the target group for CloudWatch metrics"
+  type        = string
+  default     = ""
+}
+
+# Ghost ECS Variables
+variable "ghost_cluster_name" {
+  description = "Name of the Ghost ECS cluster to monitor"
+  type        = string
+  default     = ""
+}
+
+variable "ghost_service_name" {
+  description = "Name of the Ghost ECS service to monitor"
+  type        = string
+  default     = ""
 }
 
 variable "log_retention_days" {

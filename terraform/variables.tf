@@ -188,3 +188,26 @@ variable "create_dashboard" {
   type        = bool
   default     = true
 }
+
+# ALB + ACM Variables
+variable "acm_certificate_arn" {
+  description = "ARN of ACM certificate for main ALB HTTPS listener"
+  type        = string
+}
+
+# Ghost Blog Variables
+variable "ghost_certificate_arn" {
+  description = "ARN of ACM certificate for Ghost blog ALB HTTPS listener"
+  type        = string
+}
+
+variable "ghost_domain_name" {
+  description = "Domain name for Ghost blog (e.g., blog.example.com)"
+  type        = string
+}
+
+variable "ghost_image" {
+  description = "Docker image for Ghost (e.g., ghost:latest or ghost:5)"
+  type        = string
+  default     = "ghost:latest"
+}
