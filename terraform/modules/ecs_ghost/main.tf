@@ -245,6 +245,14 @@ resource "aws_ecs_task_definition" "ghost" {
         }
       ]
 
+      mountPoints = [
+        {
+          sourceVolume  = "ghost-data"
+          containerPath = "/var/lib/ghost/content"
+          readOnly      = false
+        }
+      ]
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -263,6 +271,19 @@ resource "aws_ecs_task_definition" "ghost" {
       }
     }
   ])
+
+  volume {
+    name = "ghost-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.ghost.id
+      transit_encryption = "ENABLED"
+      authorization_config {
+        access_point_id = aws_efs_access_point.ghost.id
+        iam             = "DISABLED"
+      }
+    }
+  }
 
   tags = merge(
     {
@@ -311,7 +332,7 @@ resource "aws_lb_target_group" "ghost" {
     timeout             = 5
     interval            = 30
     path                = "/"
-    matcher             = "200"
+    matcher             = "200,301"
   }
 
   deregistration_delay = 30
@@ -402,7 +423,8 @@ resource "aws_ecs_service" "ghost" {
 
   depends_on = [
     aws_lb_listener.ghost_https,
-    aws_lb_listener.ghost_http
+    aws_lb_listener.ghost_http,
+    aws_efs_mount_target.ghost
   ]
 
   tags = merge(
@@ -417,3 +439,92 @@ resource "aws_ecs_service" "ghost" {
 
 # Data source for current region
 data "aws_region" "current" {}
+
+# Security Group for EFS
+resource "aws_security_group" "ghost_efs" {
+  name        = "${var.environment}-ghost-efs-sg"
+  description = "Security group for Ghost EFS file system"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "NFS from Ghost tasks"
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ghost_tasks.id]
+  }
+
+  egress {
+    description = "All outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-ghost-efs-sg"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# EFS File System for Ghost data persistence
+resource "aws_efs_file_system" "ghost" {
+  creation_token   = "${var.environment}-ghost-efs"
+  encrypted        = true
+  performance_mode = "generalPurpose"
+  throughput_mode  = "bursting"
+
+  lifecycle_policy {
+    transition_to_ia = "AFTER_30_DAYS"
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-ghost-efs"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# EFS Mount Targets (one per subnet for high availability)
+resource "aws_efs_mount_target" "ghost" {
+  count           = length(var.subnet_ids)
+  file_system_id  = aws_efs_file_system.ghost.id
+  subnet_id       = var.subnet_ids[count.index]
+  security_groups = [aws_security_group.ghost_efs.id]
+}
+
+# EFS Access Point for Ghost data directory
+resource "aws_efs_access_point" "ghost" {
+  file_system_id = aws_efs_file_system.ghost.id
+
+  root_directory {
+    path = "/ghost"
+    creation_info {
+      owner_gid   = 1000
+      owner_uid   = 1000
+      permissions = "755"
+    }
+  }
+
+  posix_user {
+    gid = 1000
+    uid = 1000
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-ghost-efs-access-point"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}

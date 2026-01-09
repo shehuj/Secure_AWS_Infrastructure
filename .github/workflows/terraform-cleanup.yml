@@ -1,0 +1,143 @@
+name: Terraform Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      cleanup_type:
+        description: 'Type of cleanup to perform'
+        required: true
+        type: choice
+        options:
+          - force-unlock
+          - destroy-all
+          - refresh-state
+          - clean-artifacts
+      lock_id:
+        description: 'Lock ID (required for force-unlock)'
+        required: false
+        type: string
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm infrastructure destruction'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  cleanup:
+    name: Perform Cleanup
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Force Unlock State
+        if: github.event.inputs.cleanup_type == 'force-unlock'
+        run: |
+          if [ -z "${{ github.event.inputs.lock_id }}" ]; then
+            echo "Error: Lock ID is required for force-unlock operation"
+            exit 1
+          fi
+          echo "Attempting to force unlock with ID: ${{ github.event.inputs.lock_id }}"
+          terraform force-unlock -force ${{ github.event.inputs.lock_id }}
+          echo "State unlocked successfully"
+
+      - name: Refresh State
+        if: github.event.inputs.cleanup_type == 'refresh-state'
+        run: |
+          echo "Refreshing Terraform state..."
+          terraform refresh -input=false
+          echo "State refreshed successfully"
+
+      - name: Destroy Infrastructure
+        if: github.event.inputs.cleanup_type == 'destroy-all'
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "Error: You must type 'DESTROY' in the confirm_destroy field to proceed"
+            exit 1
+          fi
+          echo "WARNING: Destroying all infrastructure..."
+          terraform destroy -auto-approve -input=false -lock-timeout=5m
+          echo "Infrastructure destroyed successfully"
+
+      - name: Clean Workflow Artifacts
+        if: github.event.inputs.cleanup_type == 'clean-artifacts'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Get all artifacts
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner,
+              repo,
+              per_page: 100
+            });
+
+            let deletedCount = 0;
+
+            // Delete old terraform plan artifacts
+            for (const artifact of artifacts.data.artifacts) {
+              if (artifact.name.includes('tfplan')) {
+                console.log(`Deleting artifact: ${artifact.name} (ID: ${artifact.id})`);
+                await github.rest.actions.deleteArtifact({
+                  owner,
+                  repo,
+                  artifact_id: artifact.id
+                });
+                deletedCount++;
+              }
+            }
+
+            console.log(`Cleaned up ${deletedCount} terraform plan artifacts`);
+
+      - name: Create Summary
+        if: always()
+        run: |
+          echo "## Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cleanup Type**: ${{ github.event.inputs.cleanup_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          case "${{ github.event.inputs.cleanup_type }}" in
+            "force-unlock")
+              echo "### Force Unlock Details" >> $GITHUB_STEP_SUMMARY
+              echo "- **Lock ID**: ${{ github.event.inputs.lock_id }}" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "destroy-all")
+              echo "### Destroy Details" >> $GITHUB_STEP_SUMMARY
+              echo "All infrastructure has been destroyed" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "refresh-state")
+              echo "### Refresh Details" >> $GITHUB_STEP_SUMMARY
+              echo "Terraform state has been refreshed with current infrastructure" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "clean-artifacts")
+              echo "### Artifact Cleanup" >> $GITHUB_STEP_SUMMARY
+              echo "Old terraform plan artifacts have been removed" >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
