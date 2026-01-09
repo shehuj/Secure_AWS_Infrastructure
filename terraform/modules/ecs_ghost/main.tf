@@ -142,15 +142,15 @@ resource "aws_security_group" "ghost_alb" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.trusted_ip_ranges
+    # Ensure this list contains only trusted IP ranges
   }
 
   ingress {
     description = "HTTP from internet (redirect to HTTPS)"
     from_port   = 80
     to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.trusted_ip_ranges
   }
 
   egress {
