@@ -49,10 +49,12 @@ resource "aws_sns_topic_subscription" "alarm_email" {
   endpoint  = var.alarm_email_endpoints[count.index]
 }
 
-# EC2 CPU Utilization Alarm
-resource "aws_cloudwatch_metric_alarm" "ec2_cpu_high" {
-  count               = length(var.instance_ids)
-  alarm_name          = "${var.environment}-ec2-cpu-high-${count.index + 1}"
+# Old EC2 alarms - replaced by ASG/ALB/ECS alarms
+# (Kept commented for reference)
+
+# ASG CPU Utilization Alarm
+resource "aws_cloudwatch_metric_alarm" "asg_cpu_high" {
+  alarm_name          = "${var.environment}-asg-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -60,16 +62,16 @@ resource "aws_cloudwatch_metric_alarm" "ec2_cpu_high" {
   period              = 300
   statistic           = "Average"
   threshold           = var.cpu_threshold
-  alarm_description   = "This metric monitors EC2 CPU utilization"
+  alarm_description   = "This metric monitors ASG average CPU utilization"
   alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
 
   dimensions = {
-    InstanceId = var.instance_ids[count.index]
+    AutoScalingGroupName = var.asg_name
   }
 
   tags = merge(
     {
-      Name        = "${var.environment}-ec2-cpu-high-${count.index + 1}"
+      Name        = "${var.environment}-asg-cpu-high"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
@@ -77,27 +79,54 @@ resource "aws_cloudwatch_metric_alarm" "ec2_cpu_high" {
   )
 }
 
-# EC2 Status Check Failed Alarm
-resource "aws_cloudwatch_metric_alarm" "ec2_status_check_failed" {
-  count               = length(var.instance_ids)
-  alarm_name          = "${var.environment}-ec2-status-check-failed-${count.index + 1}"
+# ALB Target Response Time Alarm
+resource "aws_cloudwatch_metric_alarm" "alb_target_response_time" {
+  alarm_name          = "${var.environment}-alb-response-time-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
-  metric_name         = "StatusCheckFailed"
-  namespace           = "AWS/EC2"
+  metric_name         = "TargetResponseTime"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 1
+  alarm_description   = "This metric monitors ALB target response time"
+  alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
+
+  dimensions = {
+    LoadBalancer = var.alb_arn_suffix
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-alb-response-time-high"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# ALB Unhealthy Targets Alarm
+resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_targets" {
+  alarm_name          = "${var.environment}-alb-unhealthy-targets"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
   period              = 300
   statistic           = "Maximum"
   threshold           = 0
-  alarm_description   = "This metric monitors EC2 status checks"
+  alarm_description   = "This metric monitors unhealthy targets in the ALB target group"
   alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
 
   dimensions = {
-    InstanceId = var.instance_ids[count.index]
+    TargetGroup  = var.target_group_arn_suffix
+    LoadBalancer = var.alb_arn_suffix
   }
 
   tags = merge(
     {
-      Name        = "${var.environment}-ec2-status-check-failed-${count.index + 1}"
+      Name        = "${var.environment}-alb-unhealthy-targets"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
@@ -105,55 +134,56 @@ resource "aws_cloudwatch_metric_alarm" "ec2_status_check_failed" {
   )
 }
 
-# Memory Utilization Alarm (requires CloudWatch agent)
-resource "aws_cloudwatch_metric_alarm" "ec2_memory_high" {
-  count               = var.enable_memory_monitoring ? length(var.instance_ids) : 0
-  alarm_name          = "${var.environment}-ec2-memory-high-${count.index + 1}"
+# Ghost ECS CPU Utilization Alarm
+resource "aws_cloudwatch_metric_alarm" "ghost_cpu_high" {
+  alarm_name          = "${var.environment}-ghost-cpu-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.cpu_threshold
+  alarm_description   = "This metric monitors Ghost ECS service CPU utilization"
+  alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
+
+  dimensions = {
+    ServiceName = var.ghost_service_name
+    ClusterName = var.ghost_cluster_name
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-ghost-cpu-high"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# Ghost ECS Memory Utilization Alarm
+resource "aws_cloudwatch_metric_alarm" "ghost_memory_high" {
+  count               = var.enable_memory_monitoring ? 1 : 0
+  alarm_name          = "${var.environment}-ghost-memory-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "MemoryUtilization"
-  namespace           = "WebServer/${var.environment}"
+  namespace           = "AWS/ECS"
   period              = 300
   statistic           = "Average"
   threshold           = var.memory_threshold
-  alarm_description   = "This metric monitors EC2 memory utilization"
+  alarm_description   = "This metric monitors Ghost ECS service memory utilization"
   alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
 
   dimensions = {
-    InstanceId = var.instance_ids[count.index]
+    ServiceName = var.ghost_service_name
+    ClusterName = var.ghost_cluster_name
   }
 
   tags = merge(
     {
-      Name        = "${var.environment}-ec2-memory-high-${count.index + 1}"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    },
-    var.tags
-  )
-}
-
-# Disk Utilization Alarm (requires CloudWatch agent)
-resource "aws_cloudwatch_metric_alarm" "ec2_disk_high" {
-  count               = var.enable_disk_monitoring ? length(var.instance_ids) : 0
-  alarm_name          = "${var.environment}-ec2-disk-high-${count.index + 1}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "DiskUtilization"
-  namespace           = "WebServer/${var.environment}"
-  period              = 300
-  statistic           = "Average"
-  threshold           = var.disk_threshold
-  alarm_description   = "This metric monitors EC2 disk utilization"
-  alarm_actions       = var.create_sns_topic ? [aws_sns_topic.alarms[0].arn] : []
-
-  dimensions = {
-    InstanceId = var.instance_ids[count.index]
-  }
-
-  tags = merge(
-    {
-      Name        = "${var.environment}-ec2-disk-high-${count.index + 1}"
+      Name        = "${var.environment}-ghost-memory-high"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
@@ -167,94 +197,80 @@ resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${var.environment}-infrastructure-dashboard"
 
   dashboard_body = jsonencode({
-    widgets = concat(
-      [
-        {
-          type = "metric"
-          properties = {
-            metrics = [
-              for idx, instance_id in var.instance_ids : [
-                "AWS/EC2", "CPUUtilization", { stat = "Average", period = 300 },
-                { InstanceId = instance_id, label = "Instance ${idx + 1}" }
-              ]
-            ]
-            view    = "timeSeries"
-            stacked = false
-            region  = data.aws_region.current.id
-            title   = "EC2 CPU Utilization"
-            period  = 300
-          }
-        },
-        {
-          type = "metric"
-          properties = {
-            metrics = [
-              for idx, instance_id in var.instance_ids : [
-                "AWS/EC2", "NetworkIn", { stat = "Sum", period = 300 },
-                { InstanceId = instance_id, label = "Instance ${idx + 1}" }
-              ]
-            ]
-            view    = "timeSeries"
-            stacked = false
-            region  = data.aws_region.current.id
-            title   = "Network In"
-            period  = 300
-          }
-        },
-        {
-          type = "metric"
-          properties = {
-            metrics = [
-              for idx, instance_id in var.instance_ids : [
-                "AWS/EC2", "NetworkOut", { stat = "Sum", period = 300 },
-                { InstanceId = instance_id, label = "Instance ${idx + 1}" }
-              ]
-            ]
-            view    = "timeSeries"
-            stacked = false
-            region  = data.aws_region.current.id
-            title   = "Network Out"
-            period  = 300
-          }
+    widgets = [
+      # ASG Metrics
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            ["AWS/EC2", "CPUUtilization", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.id
+          title   = "ASG CPU Utilization"
+          period  = 300
         }
-      ],
-      var.enable_memory_monitoring ? [
-        {
-          type = "metric"
-          properties = {
-            metrics = [
-              for idx, instance_id in var.instance_ids : [
-                "WebServer/${var.environment}", "MemoryUtilization", { stat = "Average", period = 300 },
-                { InstanceId = instance_id, label = "Instance ${idx + 1}" }
-              ]
-            ]
-            view    = "timeSeries"
-            stacked = false
-            region  = data.aws_region.current.id
-            title   = "Memory Utilization"
-            period  = 300
-          }
+      },
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            ["AWS/AutoScaling", "GroupInServiceInstances", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }],
+            [".", "GroupDesiredCapacity", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.id
+          title   = "ASG Instance Count"
+          period  = 300
         }
-      ] : [],
-      var.enable_disk_monitoring ? [
-        {
-          type = "metric"
-          properties = {
-            metrics = [
-              for idx, instance_id in var.instance_ids : [
-                "WebServer/${var.environment}", "DiskUtilization", { stat = "Average", period = 300 },
-                { InstanceId = instance_id, label = "Instance ${idx + 1}" }
-              ]
-            ]
-            view    = "timeSeries"
-            stacked = false
-            region  = data.aws_region.current.id
-            title   = "Disk Utilization"
-            period  = 300
-          }
+      },
+      # ALB Metrics
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            ["AWS/ApplicationELB", "TargetResponseTime", { stat = "Average", period = 300 }, { LoadBalancer = var.alb_arn_suffix }],
+            [".", "RequestCount", { stat = "Sum", period = 300 }, { LoadBalancer = var.alb_arn_suffix }]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.id
+          title   = "ALB Performance"
+          period  = 300
         }
-      ] : []
-    )
+      },
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            ["AWS/ApplicationELB", "HealthyHostCount", { stat = "Average", period = 300 }, { TargetGroup = var.target_group_arn_suffix, LoadBalancer = var.alb_arn_suffix }],
+            [".", "UnHealthyHostCount", { stat = "Maximum", period = 300 }, { TargetGroup = var.target_group_arn_suffix, LoadBalancer = var.alb_arn_suffix }]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.id
+          title   = "ALB Target Health"
+          period  = 300
+        }
+      },
+      # Ghost ECS Metrics
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            ["AWS/ECS", "CPUUtilization", { stat = "Average", period = 300 }, { ServiceName = var.ghost_service_name, ClusterName = var.ghost_cluster_name }],
+            [".", "MemoryUtilization", { stat = "Average", period = 300 }, { ServiceName = var.ghost_service_name, ClusterName = var.ghost_cluster_name }]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = data.aws_region.current.id
+          title   = "Ghost ECS Service - CPU & Memory"
+          period  = 300
+        }
+      }
+    ]
   })
 }
 

@@ -14,25 +14,77 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-# EC2 Outputs
-output "instance_ids" {
-  description = "List of EC2 instance IDs"
-  value       = module.ec2.instance_ids
+# Old EC2 Outputs - Replaced by ALB+ASG
+# output "instance_ids" {
+#   description = "List of EC2 instance IDs"
+#   value       = module.ec2.instance_ids
+# }
+#
+# output "web_public_ips" {
+#   description = "List of public IP addresses for web servers"
+#   value       = module.ec2.public_ips
+# }
+#
+# output "web_private_ips" {
+#   description = "List of private IP addresses for web servers"
+#   value       = module.ec2.private_ips
+# }
+#
+# output "security_group_id" {
+#   description = "ID of the security group"
+#   value       = module.ec2.security_group_id
+# }
+
+# ALB + ASG Outputs
+output "alb_dns_name" {
+  description = "DNS name of the main Application Load Balancer"
+  value       = module.alb_asg.alb_dns_name
 }
 
-output "web_public_ips" {
-  description = "List of public IP addresses for web servers"
-  value       = module.ec2.public_ips
+output "alb_zone_id" {
+  description = "Canonical hosted zone ID of the main ALB"
+  value       = module.alb_asg.alb_zone_id
 }
 
-output "web_private_ips" {
-  description = "List of private IP addresses for web servers"
-  value       = module.ec2.private_ips
+output "asg_name" {
+  description = "Name of the Auto Scaling Group"
+  value       = module.alb_asg.asg_name
 }
 
-output "security_group_id" {
-  description = "ID of the security group"
-  value       = module.ec2.security_group_id
+output "asg_arn" {
+  description = "ARN of the Auto Scaling Group"
+  value       = module.alb_asg.asg_arn
+}
+
+output "launch_template_id" {
+  description = "ID of the launch template"
+  value       = module.alb_asg.launch_template_id
+}
+
+# Ghost Blog Outputs
+output "ghost_alb_dns_name" {
+  description = "DNS name of the Ghost blog Application Load Balancer"
+  value       = module.ghost_blog.alb_dns_name
+}
+
+output "ghost_alb_zone_id" {
+  description = "Canonical hosted zone ID of the Ghost ALB"
+  value       = module.ghost_blog.alb_zone_id
+}
+
+output "ghost_ecs_cluster_name" {
+  description = "Name of the Ghost ECS cluster"
+  value       = module.ghost_blog.ecs_cluster_name
+}
+
+output "ghost_ecs_service_name" {
+  description = "Name of the Ghost ECS service"
+  value       = module.ghost_blog.ecs_service_name
+}
+
+output "ghost_task_definition_arn" {
+  description = "ARN of the Ghost task definition"
+  value       = module.ghost_blog.task_definition_arn
 }
 
 # Monitoring Outputs

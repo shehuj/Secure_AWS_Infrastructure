@@ -1,0 +1,280 @@
+name: Deploy Ghost Blog to ECS
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'docker/ghost/**'
+      - '.github/workflows/ghost-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deployment even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  ECR_REPOSITORY: ghost-blog
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME || 'prod-ghost-cluster' }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME || 'prod-ghost-service' }}
+
+jobs:
+  check-ecs:
+    name: Check ECS Infrastructure
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_exists: ${{ steps.check.outputs.cluster_exists }}
+      service_exists: ${{ steps.check.outputs.service_exists }}
+
+    steps:
+      - name: Check ECS cluster and service
+        id: check
+        run: |
+          # Check if ECS cluster exists
+          if aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+            echo "cluster_exists=true" >> $GITHUB_OUTPUT
+            echo "✓ ECS cluster $ECS_CLUSTER found"
+          else
+            echo "cluster_exists=false" >> $GITHUB_OUTPUT
+            echo "✗ ECS cluster $ECS_CLUSTER not found"
+          fi
+
+          # Check if ECS service exists
+          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+            echo "service_exists=true" >> $GITHUB_OUTPUT
+            echo "✓ ECS service $ECS_SERVICE found"
+          else
+            echo "service_exists=false" >> $GITHUB_OUTPUT
+            echo "✗ ECS service $ECS_SERVICE not found"
+          fi
+
+  deploy:
+    name: Deploy Ghost to ECS
+    runs-on: ubuntu-latest
+    needs: check-ecs
+    if: needs.check-ecs.outputs.cluster_exists == 'true' && needs.check-ecs.outputs.service_exists == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check if ECR repository exists
+        id: check-ecr
+        run: |
+          if aws ecr describe-repositories --repository-names $ECR_REPOSITORY 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✓ ECR repository $ECR_REPOSITORY exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Creating ECR repository $ECR_REPOSITORY..."
+            aws ecr create-repository \
+              --repository-name $ECR_REPOSITORY \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          fi
+
+      - name: Build Ghost Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Check if custom Dockerfile exists
+          if [ -f "docker/ghost/Dockerfile" ]; then
+            echo "Building custom Ghost image from docker/ghost/Dockerfile"
+            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./docker/ghost
+            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          else
+            echo "No custom Dockerfile found. Pulling official Ghost image and tagging for ECR..."
+            docker pull ghost:latest
+            docker tag ghost:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker tag ghost:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          fi
+
+      - name: Push image to Amazon ECR
+        id: push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Pushing image to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Get current task definition
+        id: get-task-def
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $(aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $ECS_SERVICE \
+              --query 'services[0].taskDefinition' \
+              --output text | cut -d'/' -f2) \
+            --query 'taskDefinition' \
+            > task-definition.json
+
+          echo "Current task definition saved"
+
+      - name: Update task definition with new image
+        id: update-task-def
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Update the image in the task definition
+          NEW_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          cat task-definition.json | \
+            jq --arg IMAGE "$NEW_IMAGE" \
+              '.containerDefinitions[0].image = $IMAGE |
+               del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > new-task-definition.json
+
+          echo "Updated task definition with new image: $NEW_IMAGE"
+
+      - name: Register new task definition
+        id: register-task-def
+        run: |
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task_def_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "Registered new task definition: $NEW_TASK_DEF_ARN"
+
+      - name: Update ECS service
+        id: update-service
+        run: |
+          echo "Updating ECS service $ECS_SERVICE to use new task definition..."
+
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition ${{ steps.register-task-def.outputs.task_def_arn }} \
+            --force-new-deployment
+
+          echo "✓ ECS service update initiated"
+
+      - name: Wait for service stability
+        run: |
+          echo "Waiting for service to stabilize (this may take a few minutes)..."
+
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE
+
+          echo "✓ Service is stable"
+
+      - name: Get service status
+        if: always()
+        run: |
+          echo "Getting service deployment status..."
+
+          aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].{
+              Status: status,
+              RunningCount: runningCount,
+              DesiredCount: desiredCount,
+              PendingCount: pendingCount,
+              Deployments: deployments[*].{
+                Status: status,
+                TaskDefinition: taskDefinition,
+                DesiredCount: desiredCount,
+                RunningCount: runningCount
+              }
+            }' \
+            --output table
+
+      - name: Create deployment summary
+        if: always()
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Ghost Blog Deployment Results 🚀
+
+          ### Deployment Details
+          - **Image**: \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`
+          - **ECS Cluster**: \`$ECS_CLUSTER\`
+          - **ECS Service**: \`$ECS_SERVICE\`
+          - **Task Definition**: \`${{ steps.register-task-def.outputs.task_def_arn }}\`
+          - **Deployment Status**: ${{ job.status }}
+
+          ### Actions Performed
+          - ✅ Built/pulled Ghost Docker image
+          - ✅ Pushed image to ECR
+          - ✅ Registered new task definition
+          - ✅ Updated ECS service with force deployment
+          - ✅ Waited for service stability
+
+          ### Next Steps
+          1. Access your Ghost blog via the ALB DNS name
+          2. Complete Ghost setup at \`/ghost/\` if first deployment
+          3. Monitor ECS service health in AWS Console
+          4. Check CloudWatch logs for any issues
+
+          **Commit**: ${{ github.sha }}
+          **Triggered by**: @${{ github.actor }}
+          EOF
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [check-ecs, deploy]
+    if: failure() && needs.check-ecs.outputs.service_exists == 'true'
+
+    steps:
+      - name: Notify deployment failure
+        run: |
+          echo "Ghost deployment failed!"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## ⚠️ Ghost Deployment Failed
+
+          The Ghost blog deployment encountered errors. You may need to:
+
+          ### Recommended Actions:
+          1. Check the deployment logs above for specific errors
+          2. Verify ECR image was pushed successfully
+          3. Check ECS task definition is valid
+          4. Review ECS service events in AWS Console
+          5. Check CloudWatch logs: \`/ecs/\${environment}/ghost\`
+
+          ### Manual Rollback (if needed):
+          \`\`\`bash
+          # Get previous task definition
+          aws ecs describe-services \\
+            --cluster $ECS_CLUSTER \\
+            --services $ECS_SERVICE \\
+            --query 'services[0].deployments[1].taskDefinition'
+
+          # Update service to previous task definition
+          aws ecs update-service \\
+            --cluster $ECS_CLUSTER \\
+            --service $ECS_SERVICE \\
+            --task-definition <PREVIOUS_TASK_DEF>
+          \`\`\`
+
+          ### Ghost Troubleshooting:
+          - Check Ghost container logs
+          - Verify database connectivity (if using RDS)
+          - Ensure environment variables are correct
+          - Verify ALB target group health checks
+          EOF
