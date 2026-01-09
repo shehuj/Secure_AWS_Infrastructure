@@ -212,7 +212,7 @@ __marimo__/
 *.tfvars
 !terraform.tfvars.example
 .terraform/
-.terraform.lock.hcl
+# .terraform.lock.hcl should be committed to version control per HashiCorp best practices
 crash.log
 crash.*.log
 override.tf
@@ -223,6 +223,7 @@ override.tf.json
 terraform.rc
 tfplan
 tfplan.json
+*.tfplan
 
 # Ansible
 *.retry
