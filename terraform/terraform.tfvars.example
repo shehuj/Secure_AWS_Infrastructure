@@ -1,0 +1,53 @@
+# General Configuration
+environment = "prod"
+aws_region  = "us-east-1"
+
+# GitHub OIDC Configuration
+github_repo            = "your-org/your-repo"
+terraform_state_bucket = "your-terraform-state-bucket"
+terraform_lock_table   = "terraform-locks"
+
+# VPC Configuration
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_count  = 2
+private_subnet_count = 2
+enable_nat_gateway   = true
+single_nat_gateway   = true  # Set to false for high availability (one NAT per AZ)
+enable_vpc_flow_logs = true
+
+# EC2 Configuration
+key_pair_name  = "your-ssh-key"
+instance_type  = "t3.micro"
+instance_count = 1
+
+# Security Configuration
+# WARNING: Leaving SSH open to the world (0.0.0.0/0) is a security risk
+# Specify your IP address or IP range instead
+allowed_ssh_cidr = []  # Empty list disables SSH access
+# allowed_ssh_cidr = ["YOUR_IP_ADDRESS/32"]  # Uncomment and specify your IP
+
+allowed_http_cidr  = ["0.0.0.0/0"]
+allowed_https_cidr = ["0.0.0.0/0"]
+
+enable_public_ip = true
+root_volume_size = 20
+root_volume_type = "gp3"
+
+# Monitoring Configuration
+log_retention_days       = 30
+create_sns_topic         = false  # Set to true to enable SNS alerts
+alarm_email_endpoints    = []     # Add email addresses for alerts
+cpu_threshold            = 80
+memory_threshold         = 80
+disk_threshold           = 80
+enable_memory_monitoring = true
+enable_disk_monitoring   = true
+create_dashboard         = true
+
+# Common Tags
+tags = {
+  Project     = "Secure AWS Infrastructure"
+  Owner       = "DevOps Team"
+  CostCenter  = "Engineering"
+  Compliance  = "Required"
+}
