@@ -3,7 +3,7 @@ terraform {
     bucket         = "ec2-shutdown-lambda-bucket"
     key            = "prodinfra/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "terraform-locks"
+    dynamodb_table = "dyning_table"
     encrypt        = true
 
     # Enable state locking for idempotency
