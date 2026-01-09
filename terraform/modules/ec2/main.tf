@@ -19,6 +19,7 @@ locals {
 }
 
 # Security Group
+#checkov:skip=CKV_AWS_260:Port 80 access is configurable via var.allowed_http_cidr - this module is legacy and not actively used
 resource "aws_security_group" "web" {
   name        = "${var.environment}-web-sg"
   description = "Security group for web servers"
@@ -127,19 +128,15 @@ resource "aws_iam_role_policy" "ec2_custom" {
       {
         Effect = "Allow"
         Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:logs:*:*:log-group:/aws/ec2/${var.environment}/*",
+          "arn:aws:logs:*:*:log-group:WebServer/${var.environment}/*"
+        ]
       }
     ]
   })

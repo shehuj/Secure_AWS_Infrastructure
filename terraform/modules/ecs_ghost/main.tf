@@ -92,10 +92,10 @@ resource "aws_iam_role" "ecs_task" {
   )
 }
 
-# Custom policy for Ghost task (CloudWatch logs, etc.)
+# Custom policy for Ghost task (CloudWatch logs only)
 resource "aws_iam_policy" "ghost_task" {
   name        = "${var.environment}-ghost-task-policy"
-  description = "Policy for Ghost ECS task"
+  description = "Policy for Ghost ECS task - CloudWatch Logs only"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -107,7 +107,10 @@ resource "aws_iam_policy" "ghost_task" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          "arn:aws:logs:*:*:log-group:/ecs/${var.environment}/ghost",
+          "arn:aws:logs:*:*:log-group:/ecs/${var.environment}/ghost:*"
+        ]
       }
     ]
   })
@@ -128,6 +131,7 @@ resource "aws_iam_role_policy_attachment" "ghost_task" {
 }
 
 # Security Group for Ghost ALB
+#checkov:skip=CKV_AWS_260:Port 80 is intentionally open for HTTP to HTTPS redirect - all HTTP traffic is immediately redirected to HTTPS (301)
 resource "aws_security_group" "ghost_alb" {
   name        = "${var.environment}-ghost-alb-sg"
   description = "Security group for Ghost Application Load Balancer"
