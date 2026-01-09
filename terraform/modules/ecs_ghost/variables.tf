@@ -65,3 +65,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "trusted_ip_ranges" {
+  description = "List of trusted IP ranges for ingress rules"
+  type        = list(string)
+  default     = ["0.0.0.0/0"] # Replace with actual trusted IP ranges
+}

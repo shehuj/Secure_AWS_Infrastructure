@@ -18,6 +18,10 @@ on:
           - staging
           - prod
 
+concurrency:
+  group: terraform-apply-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
@@ -57,14 +61,16 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform plan -input=false -out=tfplan -detailed-exitcode
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          terraform plan -input=false -out=tfplan -detailed-exitcode -lock-timeout=5m
+          PLAN_EXIT=$?
+          echo "exitcode=$PLAN_EXIT" >> $GITHUB_OUTPUT
           set -e
-          terraform show tfplan > tfplan.txt
-        continue-on-error: true
+          if [ -f tfplan ]; then
+            terraform show tfplan > tfplan.txt
+          fi
+          exit 0
 
       - name: Upload Plan for Apply
-        if: steps.plan.outputs.exitcode == 2
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-apply
@@ -73,7 +79,6 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Plan Output
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-apply-text
@@ -85,7 +90,6 @@ jobs:
     name: Apply Infrastructure Changes
     runs-on: ubuntu-latest
     needs: plan
-    if: needs.plan.outputs.plan_exitcode == 2
 #    environment:
 #      name: ${{ github.event.inputs.environment || 'prod' }}
 #      url: ${{ steps.apply.outputs.url }}
@@ -115,7 +119,7 @@ jobs:
       - name: Terraform Apply
         id: apply
         run: |
-          terraform apply -input=false tfplan
+          terraform apply -input=false -lock-timeout=5m tfplan
           echo "url=https://console.aws.amazon.com/vpc" >> $GITHUB_OUTPUT
 
       - name: Get Terraform Outputs
@@ -142,7 +146,6 @@ jobs:
     name: Notify on Status
     runs-on: ubuntu-latest
     needs: [plan, apply]
-    if: always()
 
     steps:
       - name: Create status comment
@@ -153,7 +156,7 @@ jobs:
             const planExitcode = '${{ needs.plan.outputs.plan_exitcode }}';
 
             let message = '';
-            if (planExitcode == 0) {
+            if (planExitcode == '0') {
               message = '✅ No infrastructure changes detected.';
             } else if (applyStatus === 'success') {
               message = '✅ Terraform apply completed successfully!';

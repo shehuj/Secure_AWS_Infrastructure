@@ -203,27 +203,29 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/EC2", "CPUUtilization", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }]
+            ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", var.asg_name]
           ]
           view    = "timeSeries"
           stacked = false
           region  = data.aws_region.current.id
           title   = "ASG CPU Utilization"
           period  = 300
+          stat    = "Average"
         }
       },
       {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/AutoScaling", "GroupInServiceInstances", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }],
-            [".", "GroupDesiredCapacity", { stat = "Average", period = 300 }, { AutoScalingGroupName = var.asg_name }]
+            ["AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", var.asg_name],
+            [".", "GroupDesiredCapacity", "AutoScalingGroupName", var.asg_name]
           ]
           view    = "timeSeries"
           stacked = false
           region  = data.aws_region.current.id
           title   = "ASG Instance Count"
           period  = 300
+          stat    = "Average"
         }
       },
       # ALB Metrics
@@ -231,8 +233,8 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/ApplicationELB", "TargetResponseTime", { stat = "Average", period = 300 }, { LoadBalancer = var.alb_arn_suffix }],
-            [".", "RequestCount", { stat = "Sum", period = 300 }, { LoadBalancer = var.alb_arn_suffix }]
+            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.alb_arn_suffix, { stat = "Average" }],
+            [".", "RequestCount", "LoadBalancer", var.alb_arn_suffix, { stat = "Sum" }]
           ]
           view    = "timeSeries"
           stacked = false
@@ -245,14 +247,15 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/ApplicationELB", "HealthyHostCount", { stat = "Average", period = 300 }, { TargetGroup = var.target_group_arn_suffix, LoadBalancer = var.alb_arn_suffix }],
-            [".", "UnHealthyHostCount", { stat = "Maximum", period = 300 }, { TargetGroup = var.target_group_arn_suffix, LoadBalancer = var.alb_arn_suffix }]
+            ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", var.target_group_arn_suffix, "LoadBalancer", var.alb_arn_suffix],
+            [".", "UnHealthyHostCount", "TargetGroup", var.target_group_arn_suffix, "LoadBalancer", var.alb_arn_suffix, { stat = "Maximum" }]
           ]
           view    = "timeSeries"
           stacked = false
           region  = data.aws_region.current.id
           title   = "ALB Target Health"
           period  = 300
+          stat    = "Average"
         }
       },
       # Ghost ECS Metrics
@@ -260,14 +263,15 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/ECS", "CPUUtilization", { stat = "Average", period = 300 }, { ServiceName = var.ghost_service_name, ClusterName = var.ghost_cluster_name }],
-            [".", "MemoryUtilization", { stat = "Average", period = 300 }, { ServiceName = var.ghost_service_name, ClusterName = var.ghost_cluster_name }]
+            ["AWS/ECS", "CPUUtilization", "ServiceName", var.ghost_service_name, "ClusterName", var.ghost_cluster_name],
+            [".", "MemoryUtilization", "ServiceName", var.ghost_service_name, "ClusterName", var.ghost_cluster_name]
           ]
           view    = "timeSeries"
           stacked = false
           region  = data.aws_region.current.id
           title   = "Ghost ECS Service - CPU & Memory"
           period  = 300
+          stat    = "Average"
         }
       }
     ]

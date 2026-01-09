@@ -82,3 +82,23 @@ output "task_role_arn" {
   description = "ARN of the ECS task role"
   value       = aws_iam_role.ecs_task.arn
 }
+
+output "efs_file_system_id" {
+  description = "ID of the EFS file system for Ghost data"
+  value       = aws_efs_file_system.ghost.id
+}
+
+output "efs_file_system_arn" {
+  description = "ARN of the EFS file system for Ghost data"
+  value       = aws_efs_file_system.ghost.arn
+}
+
+output "efs_access_point_id" {
+  description = "ID of the EFS access point for Ghost"
+  value       = aws_efs_access_point.ghost.id
+}
+
+output "efs_security_group_id" {
+  description = "ID of the EFS security group"
+  value       = aws_security_group.ghost_efs.id
+}

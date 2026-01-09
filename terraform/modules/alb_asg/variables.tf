@@ -11,7 +11,6 @@ variable "subnet_ids" {
 variable "environment" {
   description = "Environment name (e.g., prod, staging, dev)"
   type        = string
-  default     = "prod"
 }
 
 variable "instance_type" {
@@ -52,7 +51,7 @@ variable "health_check_path" {
 variable "enable_deletion_protection" {
   description = "Enable deletion protection on the ALB"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_stickiness" {
