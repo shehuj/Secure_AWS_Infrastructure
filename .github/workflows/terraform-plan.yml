@@ -2,7 +2,7 @@ name: Terraform Plan
 
 on:
   pull_request:
-    branches: ["main", "develop"]
+    branches: ["main", "dev"]
     paths:
       - 'terraform/**'
       - '.github/workflows/terraform-plan.yml'
@@ -43,7 +43,7 @@ jobs:
 
       - name: Terraform Init
         id: init
-        run: terraform init -backend=false
+        run: terraform init
 
       - name: Terraform Validate
         id: validate
