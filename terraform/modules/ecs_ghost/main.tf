@@ -149,6 +149,7 @@ resource "aws_security_group" "ghost_alb" {
     description = "HTTP from internet (redirect to HTTPS)"
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = var.trusted_ip_ranges
   }
 
