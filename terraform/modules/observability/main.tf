@@ -376,10 +376,10 @@ resource "aws_ssm_parameter" "prometheus_config" {
   description = "Prometheus configuration"
   type        = "String"
   value = templatefile("${path.module}/prometheus.yml.tpl", {
-    region              = data.aws_region.current.name
-    ecs_cluster_name    = var.ecs_cluster_name
-    ghost_service_name  = var.ghost_service_name
-    retention_days      = var.prometheus_retention_days
+    region             = data.aws_region.current.name
+    ecs_cluster_name   = var.ecs_cluster_name
+    ghost_service_name = var.ghost_service_name
+    retention_days     = var.prometheus_retention_days
   })
 
   tags = merge(
