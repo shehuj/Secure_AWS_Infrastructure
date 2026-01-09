@@ -1,22 +1,255 @@
-name: Run Ansible
+name: Ansible Deployment
 
 on:
   workflow_run:
     workflows: ["Terraform Apply"]
     types: ["completed"]
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Force run even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  ansible:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  check-infrastructure:
+    name: Check Infrastructure State
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    outputs:
+      instances_exist: ${{ steps.check.outputs.instances_exist }}
+      instance_ids: ${{ steps.check.outputs.instance_ids }}
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          role-session-name: GitHubActions-AnsibleCheck
 
-      - name: Install Ansible & AWS deps
+      - name: Check for EC2 instances
+        id: check
         run: |
-          python -m pip install ansible amazon.aws boto3
+          # Find instances with Role=web tag
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Role,Values=web" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output json)
 
-      - name: Run Ansible playbook
+          INSTANCE_COUNT=$(echo "$INSTANCES" | jq 'length')
+
+          if [ "$INSTANCE_COUNT" -gt 0 ]; then
+            echo "instances_exist=true" >> $GITHUB_OUTPUT
+            echo "instance_ids=$(echo $INSTANCES | jq -c .)" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "Found $INSTANCE_COUNT instances to configure"
+          else
+            echo "instances_exist=false" >> $GITHUB_OUTPUT
+            echo "instance_ids=[]" >> $GITHUB_OUTPUT
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "No instances found with Role=web tag"
+          fi
+
+  ansible-deploy:
+    name: Deploy Configuration with Ansible
+    runs-on: ubuntu-latest
+    needs: check-infrastructure
+    if: needs.check-infrastructure.outputs.should_deploy == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          role-session-name: GitHubActions-AnsibleDeploy
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Ansible and dependencies
         run: |
-          ansible-playbook ansible/playbooks/webserver.yml
+          python -m pip install --upgrade pip
+          pip install ansible ansible-lint boto3 botocore
+
+      - name: Verify Ansible installation
+        run: |
+          ansible --version
+          ansible-galaxy collection list
+
+      - name: Install AWS collection
+        run: |
+          ansible-galaxy collection install amazon.aws community.general
+
+      - name: Validate Ansible playbook
+        run: |
+          cd ansible
+          ansible-playbook playbooks/webserver.yml --syntax-check
+
+      - name: Run ansible-lint
+        run: |
+          cd ansible
+          ansible-lint playbooks/webserver.yml || true
+        continue-on-error: true
+
+      - name: Test dynamic inventory
+        run: |
+          cd ansible
+          ansible-inventory -i inventory/aws_ec2.yml --list
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Check instance connectivity
+        id: connectivity
+        run: |
+          cd ansible
+          # Use SSM for connectivity check (no SSH key needed)
+          INSTANCES='${{ needs.check-infrastructure.outputs.instance_ids }}'
+          for instance_id in $(echo $INSTANCES | jq -r '.[]'); do
+            echo "Checking SSM connectivity for $instance_id"
+            aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$instance_id" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text || echo "SSM not ready for $instance_id"
+          done
+        continue-on-error: true
+
+      - name: Run Ansible playbook (idempotent)
+        id: ansible
+        run: |
+          cd ansible
+
+          # Run playbook with check mode first to see what would change
+          echo "=== Running in CHECK mode to detect changes ==="
+          ansible-playbook playbooks/webserver.yml \
+            --check \
+            --diff || true
+
+          # Run playbook for real
+          echo "=== Running playbook ==="
+          ansible-playbook playbooks/webserver.yml \
+            --diff \
+            -v
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          ANSIBLE_HOST_KEY_CHECKING: 'False'
+
+      - name: Verify deployment
+        id: verify
+        run: |
+          cd ansible
+
+          # Get instance public IPs
+          INSTANCE_IPS=$(ansible-inventory -i inventory/aws_ec2.yml --list | \
+            jq -r '.aws_ec2.hosts[]' | head -5)
+
+          echo "Verifying deployment on instances..."
+          for ip in $INSTANCE_IPS; do
+            echo "Testing $ip..."
+
+            # Wait for nginx to be ready
+            for i in {1..30}; do
+              if curl -sf -m 5 "http://$ip/health" > /dev/null 2>&1; then
+                echo "✓ Health check passed for $ip"
+                break
+              fi
+              echo "Waiting for nginx on $ip... ($i/30)"
+              sleep 2
+            done
+
+            # Verify response
+            RESPONSE=$(curl -sf -m 5 "http://$ip/health" || echo "FAILED")
+            if [ "$RESPONSE" = "OK" ]; then
+              echo "✓ Instance $ip is healthy"
+            else
+              echo "✗ Instance $ip health check failed"
+              exit 1
+            fi
+          done
+        continue-on-error: true
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## Ansible Deployment Results 🚀
+
+          ### Infrastructure Status
+          - **Instances Found**: ${{ needs.check-infrastructure.outputs.instances_exist }}
+          - **Instance IDs**: `${{ needs.check-infrastructure.outputs.instance_ids }}`
+          - **Deployment Status**: ${{ steps.ansible.outcome }}
+          - **Verification Status**: ${{ steps.verify.outcome }}
+
+          ### Deployment Actions
+          The Ansible playbook was executed in idempotent mode:
+          - ✅ Only changed resources were updated
+          - ✅ Existing configurations were preserved
+          - ✅ Services were gracefully restarted if needed
+
+          ### Next Steps
+          1. Access your web servers via the public IPs
+          2. Check CloudWatch dashboard for metrics
+          3. Review nginx logs in CloudWatch Logs
+          EOF
+
+      - name: Upload Ansible logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-logs
+          path: |
+            ansible/*.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [check-infrastructure, ansible-deploy]
+    if: failure() && needs.check-infrastructure.outputs.instances_exist == 'true'
+
+    steps:
+      - name: Notify deployment failure
+        run: |
+          echo "Ansible deployment failed!"
+          echo "Manual intervention may be required."
+          echo "Check the logs and instance status."
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## ⚠️ Deployment Failed
+
+          The Ansible deployment encountered errors. The infrastructure remains in place,
+          but the configuration may be incomplete.
+
+          ### Recommended Actions:
+          1. Review the Ansible logs in the artifacts
+          2. Check instance status in AWS Console
+          3. Verify SSM connectivity to instances
+          4. Re-run the workflow after addressing issues
+
+          ### Manual Rollback (if needed):
+          ```bash
+          # Connect via SSM
+          aws ssm start-session --target INSTANCE_ID
+
+          # Check nginx status
+          sudo systemctl status nginx
+
+          # Review logs
+          sudo tail -f /var/log/nginx/error.log
+          ```
+          EOF

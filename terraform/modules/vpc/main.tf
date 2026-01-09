@@ -21,6 +21,16 @@ resource "aws_vpc" "main" {
     },
     var.tags
   )
+
+  lifecycle {
+    # Prevent accidental destruction of VPC
+    prevent_destroy = false  # Set to true in production
+    # Ignore changes to tags added by AWS or other tools
+    ignore_changes = [
+      tags["Created"],
+      tags["Modified"]
+    ]
+  }
 }
 
 # Internet Gateway
@@ -54,6 +64,13 @@ resource "aws_subnet" "public" {
     },
     var.tags
   )
+
+  lifecycle {
+    # Create new subnet before destroying old one
+    create_before_destroy = true
+    # Ignore AWS-managed tags
+    ignore_changes = [tags["Created"]]
+  }
 }
 
 # Private Subnets
@@ -72,6 +89,11 @@ resource "aws_subnet" "private" {
     },
     var.tags
   )
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [tags["Created"]]
+  }
 }
 
 # Elastic IPs for NAT Gateways

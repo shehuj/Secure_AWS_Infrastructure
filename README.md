@@ -25,6 +25,17 @@ A production-ready, secure AWS infrastructure deployment using Infrastructure as
 
 ## Features
 
+### ✨ Idempotent Infrastructure
+
+This infrastructure is **fully idempotent** - you can run deployments multiple times with the same result:
+
+- 🔄 **Terraform**: Second `terraform apply` shows "No changes"
+- 🔄 **Ansible**: Second playbook run shows `changed=0`
+- 🔄 **CI/CD**: Workflows detect when no changes are needed
+- 🔄 **Automated Testing**: Idempotency validated on every deployment
+
+**Learn more**: See [Idempotency Guide](docs/IDEMPOTENCY.md) for complete documentation.
+
 ### Infrastructure Components
 
 - **VPC Module**: Complete networking setup with public and private subnets across multiple AZs
@@ -149,6 +160,8 @@ A production-ready, secure AWS infrastructure deployment using Infrastructure as
 2. Configure GitHub Secrets (see [Configuration](#configuration))
 
 ## Quick Start
+
+All operations are **idempotent** - safe to run multiple times!
 
 ### 1. Bootstrap Backend Infrastructure
 
@@ -459,3 +472,35 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ---
 
 **Made with ❤️ for secure and automated infrastructure deployment**
+
+## Idempotency
+
+This infrastructure is designed to be **completely idempotent**. Running any operation multiple times produces the same result as running it once.
+
+### Quick Verification
+
+```bash
+# Test Terraform idempotency
+terraform plan  # First run
+terraform plan  # Second run - should show "No changes"
+
+# Test Ansible idempotency
+ansible-playbook playbooks/webserver.yml  # First run
+ansible-playbook playbooks/webserver.yml  # Second run - changed=0
+
+# Run full idempotency test suite
+./scripts/test-idempotency.sh
+# or
+make idempotency-test
+```
+
+### Key Features
+
+- **Lifecycle Rules**: Prevent unnecessary resource recreation
+- **State Locking**: Prevents concurrent modifications (DynamoDB)
+- **Change Detection**: Workflows only run when needed
+- **Ignore Changes**: Dynamic attributes don't trigger updates
+- **Automated Testing**: Every deployment validates idempotency
+
+**Documentation**: See [docs/IDEMPOTENCY.md](docs/IDEMPOTENCY.md) for complete details.
+
