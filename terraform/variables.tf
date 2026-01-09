@@ -82,6 +82,7 @@ variable "enable_vpc_flow_logs" {
 variable "key_pair_name" {
   description = "SSH key pair name for EC2 instances"
   type        = string
+  default     = "key.pem"
 }
 
 variable "instance_type" {
