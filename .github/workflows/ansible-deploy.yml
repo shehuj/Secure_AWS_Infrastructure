@@ -1,0 +1,22 @@
+name: Run Ansible
+
+on:
+  workflow_run:
+    workflows: ["Terraform Apply"]
+    types: ["completed"]
+
+jobs:
+  ansible:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Ansible & AWS deps
+        run: |
+          python -m pip install ansible amazon.aws boto3
+
+      - name: Run Ansible playbook
+        run: |
+          ansible-playbook ansible/playbooks/webserver.yml
