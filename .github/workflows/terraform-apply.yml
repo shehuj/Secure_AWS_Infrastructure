@@ -67,13 +67,16 @@ jobs:
           name: tfplan-apply
           path: terraform/tfplan
           retention-days: 1
+          if-no-files-found: warn
 
       - name: Upload Plan Output
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-apply-text
           path: terraform/tfplan.txt
           retention-days: 5
+          if-no-files-found: warn
 
   apply:
     name: Apply Infrastructure Changes

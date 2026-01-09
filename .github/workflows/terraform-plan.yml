@@ -124,40 +124,56 @@ jobs:
         continue-on-error: true
 
       - name: Upload Plan Artifact
+        if: steps.plan.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
           path: terraform/tfplan
           retention-days: 5
+          if-no-files-found: warn
 
       - name: Upload Plan Output
+        if: steps.plan.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-text
           path: terraform/tfplan.txt
           retention-days: 5
+          if-no-files-found: warn
 
       - name: Comment Plan on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.plan.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const planOutput = fs.readFileSync('terraform/tfplan.txt', 'utf8');
-            const truncatedOutput = planOutput.length > 65000 ?
-              planOutput.substring(0, 65000) + '\n... (truncated)' :
-              planOutput;
+            const path = 'terraform/tfplan.txt';
 
-            const output = `#### Terraform Plan 📖
-            <details><summary>Show Plan</summary>
+            let output = '';
 
-            \`\`\`terraform
-            ${truncatedOutput}
-            \`\`\`
+            if (fs.existsSync(path)) {
+              const planOutput = fs.readFileSync(path, 'utf8');
+              const truncatedOutput = planOutput.length > 65000 ?
+                planOutput.substring(0, 65000) + '\n... (truncated)' :
+                planOutput;
 
-            </details>
+              output = `#### Terraform Plan 📖
+              <details><summary>Show Plan</summary>
 
-            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+              \`\`\`terraform
+              ${truncatedOutput}
+              \`\`\`
+
+              </details>
+
+              *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            } else {
+              output = `#### Terraform Plan 📖
+
+              ⚠️ Plan output file not found. Check the workflow logs for details.
+
+              *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            }
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
