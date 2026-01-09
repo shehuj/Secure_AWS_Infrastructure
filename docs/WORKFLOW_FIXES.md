@@ -59,3 +59,60 @@ Run the workflow and verify:
 
 **Fixed**: January 2026  
 **Status**: ✅ Resolved
+
+## Issue 2: Missing Terraform in Code Quality Job
+
+### Problem
+```
+Error: terraform: command not found
+```
+
+The code-quality job was attempting to run Terraform commands without installing Terraform first.
+
+### Root Cause
+The job was missing the `hashicorp/setup-terraform` action that installs Terraform in the GitHub Actions runner.
+
+### Solution Applied
+
+**Added to `.github/workflows/compliance.yml`**:
+
+1. **Setup Terraform Step**:
+   ```yaml
+   - name: Setup Terraform
+     uses: hashicorp/setup-terraform@v3
+     with:
+       terraform_version: ~1.7
+   ```
+
+2. **Setup Python and Ansible**:
+   ```yaml
+   - name: Set up Python
+     uses: actions/setup-python@v5
+     with:
+       python-version: '3.x'
+   
+   - name: Install Ansible
+     run: |
+       pip install ansible
+       ansible --version
+   ```
+
+3. **Enhanced Quality Report**:
+   - Better formatting with emojis
+   - Clear list of checks performed
+   - Overall job status
+
+### Result
+
+The code-quality job now:
+1. ✅ Installs Terraform before using it
+2. ✅ Checks Terraform formatting
+3. ✅ Validates Terraform configuration
+4. ✅ Installs Ansible before using it
+5. ✅ Validates Ansible playbook syntax
+6. ✅ Generates comprehensive quality report
+
+---
+
+**Fixed**: January 2026  
+**Status**: ✅ Resolved
