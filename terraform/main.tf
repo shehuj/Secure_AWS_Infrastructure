@@ -44,7 +44,7 @@ module "ghost_blog" {
   subnet_ids                 = module.vpc.public_subnet_ids
   environment                = var.environment
   ghost_domain               = var.ghost_domain_name
-  certificate_arn            = var.acm_certificate_arn  # Consolidated certificate ARN
+  certificate_arn            = var.acm_certificate_arn # Consolidated certificate ARN
   ghost_image                = var.ghost_image
   desired_count              = 2
   cpu                        = 512
