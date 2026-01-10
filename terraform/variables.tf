@@ -193,7 +193,7 @@ variable "create_dashboard" {
 variable "acm_certificate_arn" {
   description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog)"
   type        = string
-  default     = "" # Must be provided via terraform.tfvars or environment variable
+  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b" # Must be provided via terraform.tfvars or environment variable
 }
 
 variable "ghost_domain_name" {
