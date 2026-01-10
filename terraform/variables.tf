@@ -239,7 +239,7 @@ variable "grafana_admin_password" {
   description = "Grafana admin password (use AWS Secrets Manager in production)"
   type        = string
   sensitive   = true
-  default     = "changeme123"
+  default     = "SecureGrafana2026!"
 }
 
 variable "prometheus_retention_days" {
