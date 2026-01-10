@@ -1,60 +1,81 @@
+# =============================================================================
+# Secure AWS Infrastructure - Terraform Variables Example
+# =============================================================================
+# Copy this file to terraform.tfvars and customize with your values
+# This infrastructure deploys:
+#   - VPC with public/private subnets
+#   - ALB + Auto Scaling Group (web servers)
+#   - ECS Fargate Ghost blog
+#   - CloudWatch monitoring
+#   - Optional: Prometheus + Grafana observability stack
+# =============================================================================
+
 # General Configuration
 environment = "prod"
 aws_region  = "us-east-1"
 
-# GitHub OIDC Configuration
-github_repo            = "your-org/your-repo"
+# GitHub OIDC Configuration (for GitHub Actions CI/CD)
+github_repo            = "your-org/your-repo"  # Format: owner/repo
 terraform_state_bucket = "your-terraform-state-bucket"
 terraform_lock_table   = "terraform-locks"
 
 # VPC Configuration
 vpc_cidr             = "10.0.0.0/16"
-public_subnet_count  = 2
-private_subnet_count = 2
+public_subnet_count  = 2  # Number of public subnets (recommended: 2)
+private_subnet_count = 2  # Number of private subnets (recommended: 2)
 enable_nat_gateway   = true
-single_nat_gateway   = true  # Set to false for high availability (one NAT per AZ)
-enable_vpc_flow_logs = true
+single_nat_gateway   = true   # Set to false for HA (one NAT per AZ, higher cost)
+enable_vpc_flow_logs = true   # Enable VPC Flow Logs for security auditing
 
-# EC2 Configuration
-key_pair_name  = "your-ssh-key"
-instance_type  = "t3.micro"
-instance_count = 1
+# ALB + Auto Scaling Group Configuration
+instance_type  = "t3.micro"  # Instance type for ASG web servers
+key_pair_name  = "your-ssh-key"  # SSH key name in AWS for ASG instances
+
+# Storage Configuration
+root_volume_size = 20    # GB
+root_volume_type = "gp3" # gp3 recommended for better performance/cost
 
 # Security Configuration
-# WARNING: Leaving SSH open to the world (0.0.0.0/0) is a security risk
-# Specify your IP address or IP range instead
-allowed_ssh_cidr = []  # Empty list disables SSH access
-# allowed_ssh_cidr = ["YOUR_IP_ADDRESS/32"]  # Uncomment and specify your IP
+# IMPORTANT: Restrict SSH access! Empty list = SSH disabled (recommended for production)
+allowed_ssh_cidr   = []  # Example: ["YOUR_IP/32"] to allow only your IP
+allowed_http_cidr  = ["0.0.0.0/0"]  # Public HTTP access for ALB
+allowed_https_cidr = ["0.0.0.0/0"]  # Public HTTPS access for ALB
+enable_public_ip   = true  # ASG instances need public IPs if in public subnets
 
-allowed_http_cidr  = ["0.0.0.0/0"]
-allowed_https_cidr = ["0.0.0.0/0"]
+# SSL/TLS Certificate Configuration
+# REQUIRED: Provide ACM certificate ARN for HTTPS
+# This certificate is used for both main ALB and Ghost blog ALB
+acm_certificate_arn = "arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERT_ID"
 
-enable_public_ip = true
-root_volume_size = 20
-root_volume_type = "gp3"
+# Ghost Blog Configuration (ECS Fargate)
+ghost_domain_name = "blog.example.com"  # Your Ghost blog domain
+ghost_image       = "ghost:latest"      # Docker image (ghost:latest or specific version)
 
-# Monitoring Configuration
-log_retention_days       = 30
-create_sns_topic         = false  # Set to true to enable SNS alerts
-alarm_email_endpoints    = []     # Add email addresses for alerts
-cpu_threshold            = 80
-memory_threshold         = 80
-disk_threshold           = 80
+# Monitoring Configuration (CloudWatch)
+log_retention_days       = 30     # Days to retain logs
+create_sns_topic         = false  # Set to true to create SNS topic for alarms
+alarm_email_endpoints    = []     # Example: ["devops@example.com"]
+cpu_threshold            = 80     # CPU alarm threshold (%)
+memory_threshold         = 80     # Memory alarm threshold (%)
+disk_threshold           = 80     # Disk alarm threshold (%)
 enable_memory_monitoring = true
 enable_disk_monitoring   = true
-create_dashboard         = true
+create_dashboard         = true   # Create CloudWatch dashboard
 
-# Observability Configuration (Prometheus + Grafana)
-enable_observability      = false  # Set to true to deploy monitoring stack
+# Observability Configuration (Prometheus + Grafana) - OPTIONAL
+enable_observability      = false  # Set to true to deploy Prometheus/Grafana
 grafana_domain_name       = "grafana.example.com"
-grafana_certificate_arn   = "arn:aws:acm:us-east-1:YOUR_ACCOUNT:certificate/YOUR_CERT_ID"
-grafana_admin_password    = "changeme123"  # CHANGE THIS! Use strong password
-prometheus_retention_days = 15             # Days to retain metrics
+grafana_certificate_arn   = "arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERT_ID"  # Separate cert for Grafana (optional)
+# SECURITY: Set grafana_admin_password in terraform.tfvars (NOT in this example file)
+# grafana_admin_password is required if enable_observability = true
+prometheus_retention_days = 15  # Days to retain Prometheus metrics
 
-# Common Tags
+# Common Resource Tags
 tags = {
   Project     = "Secure AWS Infrastructure"
   Owner       = "DevOps Team"
+  Environment = "Production"
+  ManagedBy   = "Terraform"
   CostCenter  = "Engineering"
-  Compliance  = "Required"
+  Compliance  = "SOC2"
 }

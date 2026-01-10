@@ -14,26 +14,6 @@ module "vpc" {
   tags = var.tags
 }
 
-# Old EC2 Module - Replaced by ALB+ASG
-# module "ec2" {
-#   source = "./modules/ec2"
-#
-#   vpc_id             = module.vpc.vpc_id
-#   subnet_ids         = module.vpc.public_subnet_ids
-#   key_pair           = var.key_pair_name
-#   instance_type      = var.instance_type
-#   instance_count     = var.instance_count
-#   environment        = var.environment
-#   allowed_ssh_cidr   = var.allowed_ssh_cidr
-#   allowed_http_cidr  = var.allowed_http_cidr
-#   allowed_https_cidr = var.allowed_https_cidr
-#   enable_public_ip   = var.enable_public_ip
-#   root_volume_size   = var.root_volume_size
-#   root_volume_type   = var.root_volume_type
-#
-#   tags = var.tags
-# }
-
 # ALB + ASG Module
 module "alb_asg" {
   source = "./modules/alb_asg"
@@ -64,7 +44,7 @@ module "ghost_blog" {
   subnet_ids                 = module.vpc.public_subnet_ids
   environment                = var.environment
   ghost_domain               = var.ghost_domain_name
-  certificate_arn            = var.ghost_certificate_arn
+  certificate_arn            = var.acm_certificate_arn  # Consolidated certificate ARN
   ghost_image                = var.ghost_image
   desired_count              = 2
   cpu                        = 512
