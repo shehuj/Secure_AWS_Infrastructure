@@ -191,17 +191,9 @@ variable "create_dashboard" {
 
 # ALB + ACM Variables
 variable "acm_certificate_arn" {
-  description = "ARN of ACM certificate for main ALB HTTPS listener"
+  description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog)"
   type        = string
-  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
-
-}
-
-# Ghost Blog Variables
-variable "ghost_certificate_arn" {
-  description = "ARN of ACM certificate for Ghost blog ALB HTTPS listener"
-  type        = string
-  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
+  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b" # Must be provided via terraform.tfvars or environment variable
 }
 
 variable "ghost_domain_name" {
@@ -236,10 +228,10 @@ variable "grafana_certificate_arn" {
 }
 
 variable "grafana_admin_password" {
-  description = "Grafana admin password (use AWS Secrets Manager in production)"
+  description = "Grafana admin password (must be provided via terraform.tfvars or AWS Secrets Manager)"
   type        = string
   sensitive   = true
-  default     = "SecureGrafana2026!"
+  default     = "" # No default - must be explicitly set for security
 }
 
 variable "prometheus_retention_days" {

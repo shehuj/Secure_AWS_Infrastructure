@@ -14,27 +14,6 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-# Old EC2 Outputs - Replaced by ALB+ASG
-# output "instance_ids" {
-#   description = "List of EC2 instance IDs"
-#   value       = module.ec2.instance_ids
-# }
-#
-# output "web_public_ips" {
-#   description = "List of public IP addresses for web servers"
-#   value       = module.ec2.public_ips
-# }
-#
-# output "web_private_ips" {
-#   description = "List of private IP addresses for web servers"
-#   value       = module.ec2.private_ips
-# }
-#
-# output "security_group_id" {
-#   description = "ID of the security group"
-#   value       = module.ec2.security_group_id
-# }
-
 # ALB + ASG Outputs
 output "alb_dns_name" {
   description = "DNS name of the main Application Load Balancer"
