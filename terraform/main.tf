@@ -116,3 +116,32 @@ module "github_oidc" {
   terraform_lock_table   = var.terraform_lock_table
   attach_readonly_policy = false
 }
+
+# Observability Module (Prometheus + Grafana)
+module "observability" {
+  count  = var.enable_observability ? 1 : 0
+  source = "./modules/observability"
+
+  vpc_id           = module.vpc.vpc_id
+  subnet_ids       = module.vpc.public_subnet_ids
+  environment      = var.environment
+  ecs_cluster_id   = module.ghost_blog.ecs_cluster_arn
+  ecs_cluster_name = module.ghost_blog.ecs_cluster_name
+  certificate_arn  = var.grafana_certificate_arn
+  grafana_domain   = var.grafana_domain_name
+
+  ghost_service_name        = module.ghost_blog.ecs_service_name
+  grafana_admin_password    = var.grafana_admin_password
+  prometheus_retention_days = var.prometheus_retention_days
+
+  cloudwatch_metrics_namespaces = [
+    "AWS/EC2",
+    "AWS/ECS",
+    "AWS/ApplicationELB",
+    "AWS/EFS"
+  ]
+
+  tags = var.tags
+
+  depends_on = [module.ghost_blog]
+}

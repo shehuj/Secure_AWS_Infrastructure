@@ -215,3 +215,35 @@ variable "ghost_image" {
   type        = string
   default     = "ghost:latest"
 }
+
+# Observability Variables (Prometheus + Grafana)
+variable "enable_observability" {
+  description = "Enable Prometheus and Grafana monitoring stack"
+  type        = bool
+  default     = false
+}
+
+variable "grafana_domain_name" {
+  description = "Domain name for Grafana (e.g., grafana.example.com)"
+  type        = string
+  default     = "grafana.claudiq.com"
+}
+
+variable "grafana_certificate_arn" {
+  description = "ARN of ACM certificate for Grafana HTTPS access"
+  type        = string
+  default     = ""
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password (use AWS Secrets Manager in production)"
+  type        = string
+  sensitive   = true
+  default     = "changeme123"
+}
+
+variable "prometheus_retention_days" {
+  description = "Prometheus data retention in days"
+  type        = number
+  default     = 15
+}

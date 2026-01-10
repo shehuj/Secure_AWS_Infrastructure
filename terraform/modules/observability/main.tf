@@ -376,7 +376,7 @@ resource "aws_ssm_parameter" "prometheus_config" {
   description = "Prometheus configuration"
   type        = "String"
   value = templatefile("${path.module}/prometheus.yml.tpl", {
-    region             = data.aws_region.current.name
+    region             = data.aws_region.current.id
     ecs_cluster_name   = var.ecs_cluster_name
     ghost_service_name = var.ghost_service_name
     retention_days     = var.prometheus_retention_days
@@ -428,11 +428,6 @@ resource "aws_ecs_task_definition" "prometheus" {
           sourceVolume  = "prometheus-data"
           containerPath = "/prometheus"
           readOnly      = false
-        },
-        {
-          sourceVolume  = "prometheus-config"
-          containerPath = "/etc/prometheus"
-          readOnly      = true
         }
       ]
 
@@ -465,16 +460,6 @@ resource "aws_ecs_task_definition" "prometheus" {
         access_point_id = aws_efs_access_point.prometheus.id
         iam             = "DISABLED"
       }
-    }
-  }
-
-  volume {
-    name = "prometheus-config"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.prometheus.id
-      transit_encryption = "ENABLED"
-      root_directory     = "/config"
     }
   }
 
@@ -777,9 +762,7 @@ resource "aws_service_discovery_service" "prometheus" {
     routing_policy = "MULTIVALUE"
   }
 
-  health_check_custom_config {
-    failure_threshold = 1
-  }
+  health_check_custom_config {}
 
   tags = merge(
     {
