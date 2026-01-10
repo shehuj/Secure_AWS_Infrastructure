@@ -125,8 +125,11 @@ jobs:
       - name: Get Terraform Outputs
         id: outputs
         run: |
-          echo "instance_ips=$(terraform output -json web_public_ips)" >> $GITHUB_OUTPUT
+          echo "alb_dns_name=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
+          echo "ghost_alb_dns_name=$(terraform output -raw ghost_alb_dns_name)" >> $GITHUB_OUTPUT
+          echo "grafana_url=$(terraform output -raw grafana_url)" >> $GITHUB_OUTPUT
           echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_OUTPUT
+          echo "asg_name=$(terraform output -raw asg_name)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Create deployment summary
@@ -135,12 +138,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Infrastructure Details" >> $GITHUB_STEP_SUMMARY
           echo "- **VPC ID**: \`${{ steps.outputs.outputs.vpc_id }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Instance IPs**: \`${{ steps.outputs.outputs.instance_ips }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto Scaling Group**: \`${{ steps.outputs.outputs.asg_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Main ALB**: \`${{ steps.outputs.outputs.alb_dns_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ghost Blog**: \`${{ steps.outputs.outputs.ghost_alb_dns_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Grafana**: \`${{ steps.outputs.outputs.grafana_url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Run Ansible deployment workflow" >> $GITHUB_STEP_SUMMARY
-          echo "2. Verify instances are healthy" >> $GITHUB_STEP_SUMMARY
-          echo "3. Check CloudWatch dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check Auto Scaling Group health in AWS Console" >> $GITHUB_STEP_SUMMARY
+          echo "3. Verify ALB target health" >> $GITHUB_STEP_SUMMARY
+          echo "4. Check CloudWatch dashboard" >> $GITHUB_STEP_SUMMARY
 
   notify:
     name: Notify on Status
