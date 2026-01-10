@@ -44,6 +44,13 @@ enable_memory_monitoring = true
 enable_disk_monitoring   = true
 create_dashboard         = true
 
+# Observability Configuration (Prometheus + Grafana)
+enable_observability      = false  # Set to true to deploy monitoring stack
+grafana_domain_name       = "grafana.example.com"
+grafana_certificate_arn   = "arn:aws:acm:us-east-1:YOUR_ACCOUNT:certificate/YOUR_CERT_ID"
+grafana_admin_password    = "changeme123"  # CHANGE THIS! Use strong password
+prometheus_retention_days = 15             # Days to retain metrics
+
 # Common Tags
 tags = {
   Project     = "Secure AWS Infrastructure"

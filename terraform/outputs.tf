@@ -108,3 +108,34 @@ output "github_actions_role_name" {
   description = "Name of the GitHub Actions IAM role"
   value       = module.github_oidc.role_name
 }
+
+# Observability Outputs (Prometheus + Grafana)
+output "grafana_url" {
+  description = "URL to access Grafana dashboard"
+  value       = var.enable_observability ? module.observability[0].grafana_url : null
+}
+
+output "grafana_alb_dns_name" {
+  description = "DNS name of the Grafana ALB"
+  value       = var.enable_observability ? module.observability[0].grafana_alb_dns_name : null
+}
+
+output "grafana_alb_zone_id" {
+  description = "Canonical hosted zone ID of the Grafana ALB"
+  value       = var.enable_observability ? module.observability[0].grafana_alb_zone_id : null
+}
+
+output "prometheus_endpoint" {
+  description = "Internal endpoint for Prometheus"
+  value       = var.enable_observability ? module.observability[0].prometheus_endpoint : null
+}
+
+output "prometheus_service_name" {
+  description = "Name of the Prometheus ECS service"
+  value       = var.enable_observability ? module.observability[0].prometheus_service_name : null
+}
+
+output "grafana_service_name" {
+  description = "Name of the Grafana ECS service"
+  value       = var.enable_observability ? module.observability[0].grafana_service_name : null
+}
