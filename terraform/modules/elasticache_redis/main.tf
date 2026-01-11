@@ -81,8 +81,8 @@ resource "aws_elasticache_parameter_group" "ghost" {
 
 # ElastiCache Replication Group (Redis Cluster)
 resource "aws_elasticache_replication_group" "ghost" {
-  replication_group_id          = "${var.environment}-ghost-redis"
-  description = "Redis cluster for Ghost blog caching and sessions"
+  replication_group_id = "${var.environment}-ghost-redis"
+  description          = "Redis cluster for Ghost blog caching and sessions"
 
   engine         = "redis"
   engine_version = var.redis_version

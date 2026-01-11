@@ -97,20 +97,20 @@ resource "aws_db_instance" "ghost" {
   publicly_accessible    = false
 
   # High Availability
-  multi_az               = var.multi_az
-  availability_zone      = var.multi_az ? null : var.availability_zone
+  multi_az          = var.multi_az
+  availability_zone = var.multi_az ? null : var.availability_zone
 
   # Backup Configuration
-  backup_retention_period   = var.backup_retention_period
-  backup_window             = var.backup_window
-  maintenance_window        = var.maintenance_window
+  backup_retention_period         = var.backup_retention_period
+  backup_window                   = var.backup_window
+  maintenance_window              = var.maintenance_window
   enabled_cloudwatch_logs_exports = ["error", "general", "slowquery"]
 
   # Performance & Monitoring
-  performance_insights_enabled    = var.enable_performance_insights
+  performance_insights_enabled          = var.enable_performance_insights
   performance_insights_retention_period = var.enable_performance_insights ? 7 : null
-  monitoring_interval = var.monitoring_interval
-  monitoring_role_arn = var.monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
+  monitoring_interval                   = var.monitoring_interval
+  monitoring_role_arn                   = var.monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
 
   # Deletion Protection
   deletion_protection       = var.deletion_protection
@@ -119,8 +119,8 @@ resource "aws_db_instance" "ghost" {
 
   # Enhanced Features
   auto_minor_version_upgrade = var.auto_minor_version_upgrade
-  copy_tags_to_snapshot     = true
-  parameter_group_name      = aws_db_parameter_group.ghost.name
+  copy_tags_to_snapshot      = true
+  parameter_group_name       = aws_db_parameter_group.ghost.name
 
   tags = merge(
     {
