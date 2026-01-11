@@ -263,7 +263,7 @@ resource "aws_ecs_task_definition" "ghost" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -s -o /dev/null -w '%%{http_code}' http://localhost:2368/ | grep -E '^(200|301)$' || exit 1"]
+        command     = ["CMD-SHELL", "curl -s -o /dev/null -w %%{http_code} http://localhost:2368/ | grep -E '^(200|301)$' || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
