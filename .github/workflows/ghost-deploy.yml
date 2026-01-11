@@ -38,22 +38,33 @@ jobs:
       - name: Check ECS cluster and service
         id: check
         run: |
-          # Check if ECS cluster exists
-          if aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+          # Check if ECS cluster exists and is ACTIVE
+          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+
+          if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
             echo "cluster_exists=true" >> $GITHUB_OUTPUT
-            echo "✓ ECS cluster $ECS_CLUSTER found"
+            echo "✓ ECS cluster $ECS_CLUSTER is ACTIVE"
           else
             echo "cluster_exists=false" >> $GITHUB_OUTPUT
-            echo "✗ ECS cluster $ECS_CLUSTER not found"
+            echo "✗ ECS cluster $ECS_CLUSTER status: $CLUSTER_STATUS"
+            echo "::warning::ECS cluster $ECS_CLUSTER is not active (status: $CLUSTER_STATUS)"
           fi
 
-          # Check if ECS service exists
-          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-            echo "service_exists=true" >> $GITHUB_OUTPUT
-            echo "✓ ECS service $ECS_SERVICE found"
+          # Check if ECS service exists and is ACTIVE (only if cluster is active)
+          if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+            SERVICE_STATUS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
+              echo "service_exists=true" >> $GITHUB_OUTPUT
+              echo "✓ ECS service $ECS_SERVICE is ACTIVE"
+            else
+              echo "service_exists=false" >> $GITHUB_OUTPUT
+              echo "✗ ECS service $ECS_SERVICE status: $SERVICE_STATUS"
+              echo "::warning::ECS service $ECS_SERVICE is not active (status: $SERVICE_STATUS)"
+            fi
           else
             echo "service_exists=false" >> $GITHUB_OUTPUT
-            echo "✗ ECS service $ECS_SERVICE not found"
+            echo "Skipping service check - cluster is not active"
           fi
 
   deploy:
@@ -160,6 +171,14 @@ jobs:
         id: update-service
         run: |
           echo "Updating ECS service $ECS_SERVICE to use new task definition..."
+
+          # Verify cluster is still active before updating
+          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text)
+          if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
+            echo "::error::Cannot update service - ECS cluster $ECS_CLUSTER is not active (status: $CLUSTER_STATUS)"
+            echo "The cluster may need to be recreated or activated."
+            exit 1
+          fi
 
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
