@@ -263,7 +263,7 @@ resource "aws_ecs_task_definition" "ghost" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:2368/ || exit 1"]
+        command     = ["CMD-SHELL", "curl -s -o /dev/null -w %%{http_code} http://localhost:2368/ | grep -E '^(200|301)$' || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -439,6 +439,38 @@ resource "aws_ecs_service" "ghost" {
 
 # Data source for current region
 data "aws_region" "current" {}
+
+# Data source for Route 53 hosted zone
+data "aws_route53_zone" "main" {
+  name         = var.ghost_domain
+  private_zone = false
+}
+
+# Route 53 A record for Ghost domain (apex)
+resource "aws_route53_record" "ghost" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.ghost_domain
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.ghost.dns_name
+    zone_id                = aws_lb.ghost.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# Route 53 A record for www subdomain
+resource "aws_route53_record" "ghost_www" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "www.${var.ghost_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.ghost.dns_name
+    zone_id                = aws_lb.ghost.zone_id
+    evaluate_target_health = true
+  }
+}
 
 # Security Group for EFS
 resource "aws_security_group" "ghost_efs" {

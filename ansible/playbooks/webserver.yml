@@ -1,8 +1,8 @@
 ---
 - name: Configure Web Servers
   hosts: aws_ec2
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   vars:
     nginx_port: 80
@@ -11,16 +11,16 @@
 
   tasks:
     - name: Update system packages
-      yum:
+      ansible.builtin.dnf:
         name: '*'
-        state: latest
-        update_cache: yes
+        state: present
+        update_cache: true
       register: yum_update
       failed_when: false
       changed_when: yum_update.changed and yum_update.results | length > 0
 
     - name: Install required packages
-      yum:
+      ansible.builtin.dnf:
         name:
           - nginx
           - python3-pip
@@ -30,7 +30,7 @@
         state: present
 
     - name: Install AWS CLI and Python packages
-      pip:
+      ansible.builtin.pip:
         name:
           - awscli
           - boto3
@@ -40,13 +40,13 @@
       changed_when: pip_install.changed
 
     - name: Ensure nginx is stopped before configuration
-      systemd:
+      ansible.builtin.systemd:
         name: nginx
         state: stopped
-      ignore_errors: yes
+      failed_when: false
 
     - name: Create application directory
-      file:
+      ansible.builtin.file:
         path: "{{ app_directory }}"
         state: directory
         owner: nginx
@@ -54,12 +54,12 @@
         mode: '0755'
 
     - name: Check if custom index page exists
-      stat:
+      ansible.builtin.stat:
         path: "{{ app_directory }}/index.html"
       register: index_file
 
     - name: Deploy custom index page
-      copy:
+      ansible.builtin.copy:
         dest: "{{ app_directory }}/index.html"
         content: |
           <!DOCTYPE html>
@@ -121,7 +121,7 @@
         mode: '0644'
 
     - name: Deploy health check endpoint
-      copy:
+      ansible.builtin.copy:
         dest: "{{ app_directory }}/health"
         content: "OK"
         owner: nginx
@@ -129,7 +129,7 @@
         mode: '0644'
 
     - name: Configure nginx
-      copy:
+      ansible.builtin.copy:
         dest: /etc/nginx/nginx.conf
         content: |
           user nginx;
@@ -187,21 +187,21 @@
       notify: Restart nginx
 
     - name: Ensure nginx is enabled and started
-      systemd:
+      ansible.builtin.systemd:
         name: nginx
-        enabled: yes
+        enabled: true
         state: started
 
     - name: Wait for nginx to be ready
-      wait_for:
+      ansible.builtin.wait_for:
         port: "{{ nginx_port }}"
         delay: 2
         timeout: 30
 
     - name: Test nginx is responding
-      uri:
+      ansible.builtin.uri:
         url: "http://localhost:{{ nginx_port }}/health"
-        return_content: yes
+        return_content: true
         status_code: 200
       register: health_check
       failed_when: health_check.content != "OK\n"
@@ -210,7 +210,7 @@
       delay: 2
 
     - name: Display deployment status
-      debug:
+      ansible.builtin.debug:
         msg: |
           ========================================
           Deployment completed successfully!
@@ -221,7 +221,7 @@
 
   handlers:
     - name: Restart nginx
-      systemd:
+      ansible.builtin.systemd:
         name: nginx
         state: restarted
-        daemon_reload: yes
+        daemon_reload: true
