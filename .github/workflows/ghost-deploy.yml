@@ -140,7 +140,7 @@ jobs:
           cat task-definition.json | \
             jq --arg IMAGE "$NEW_IMAGE" \
               '.containerDefinitions[0].image = $IMAGE |
-               del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+               del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)' \
             > new-task-definition.json
 
           echo "Updated task definition with new image: $NEW_IMAGE"
