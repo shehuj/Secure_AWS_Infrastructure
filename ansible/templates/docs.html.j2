@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation - {{ company_name | default('SecureCloud') }}</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        .docs-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 6rem 2rem 4rem;
+        }
+        .docs-grid {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            gap: 3rem;
+            margin-top: 2rem;
+        }
+        .docs-sidebar {
+            position: sticky;
+            top: 6rem;
+            height: fit-content;
+        }
+        .docs-nav {
+            list-style: none;
+        }
+        .docs-nav li {
+            margin-bottom: 0.5rem;
+        }
+        .docs-nav a {
+            display: block;
+            padding: 0.5rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-radius: var(--radius-md);
+            transition: var(--transition);
+        }
+        .docs-nav a:hover,
+        .docs-nav a.active {
+            background: var(--primary-color);
+            color: white;
+        }
+        .docs-content {
+            max-width: 800px;
+        }
+        .docs-content h2 {
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+        }
+        .docs-content h3 {
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .docs-content pre {
+            background: var(--dark);
+            color: #e2e8f0;
+            padding: 1.5rem;
+            border-radius: var(--radius-lg);
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        .docs-content code {
+            background: var(--light);
+            padding: 0.25rem 0.5rem;
+            border-radius: var(--radius-sm);
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+        .docs-content pre code {
+            background: transparent;
+            padding: 0;
+        }
+        @media (max-width: 768px) {
+            .docs-grid {
+                grid-template-columns: 1fr;
+            }
+            .docs-sidebar {
+                position: static;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                <span class="brand-name">{{ company_name | default('SecureCloud') }}</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="/" class="nav-link">Home</a></li>
+                <li><a href="/#features" class="nav-link">Features</a></li>
+                <li><a href="/#infrastructure" class="nav-link">Infrastructure</a></li>
+                <li><a href="/#status" class="nav-link">Status</a></li>
+                <li><a href="/docs" class="nav-link active">Docs</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="docs-container">
+        <h1>Documentation</h1>
+        <p class="hero-description" style="color: var(--text-secondary); margin-bottom: 2rem;">
+            Complete guide to deploying and managing your AWS infrastructure
+        </p>
+
+        <div class="docs-grid">
+            <aside class="docs-sidebar">
+                <ul class="docs-nav">
+                    <li><a href="#getting-started" class="active">Getting Started</a></li>
+                    <li><a href="#prerequisites">Prerequisites</a></li>
+                    <li><a href="#deployment">Deployment</a></li>
+                    <li><a href="#configuration">Configuration</a></li>
+                    <li><a href="#monitoring">Monitoring</a></li>
+                    <li><a href="#security">Security</a></li>
+                    <li><a href="#troubleshooting">Troubleshooting</a></li>
+                    <li><a href="#api">API Reference</a></li>
+                </ul>
+            </aside>
+
+            <main class="docs-content">
+                <section id="getting-started">
+                    <h2>Getting Started</h2>
+                    <p>This infrastructure is deployed using Terraform for provisioning and Ansible for configuration management.</p>
+
+                    <h3>Quick Start</h3>
+                    <p>Deploy the complete infrastructure with these commands:</p>
+                    <pre><code># Clone the repository
+git clone https://github.com/your-org/secure-aws-infrastructure.git
+cd secure-aws-infrastructure
+
+# Bootstrap backend
+./scripts/bootstrap.sh --bucket your-state-bucket --region us-east-1
+
+# Deploy infrastructure
+cd terraform
+terraform init
+terraform plan
+terraform apply
+
+# Configure servers
+cd ../ansible
+ansible-playbook playbooks/webserver.yml</code></pre>
+                </section>
+
+                <section id="prerequisites">
+                    <h2>Prerequisites</h2>
+                    <p>Before deploying this infrastructure, ensure you have:</p>
+                    <ul>
+                        <li>AWS Account with appropriate permissions</li>
+                        <li>AWS CLI v2.x configured</li>
+                        <li>Terraform v1.7 or higher</li>
+                        <li>Ansible v2.14 or higher</li>
+                        <li>Python 3.8+</li>
+                    </ul>
+
+                    <h3>AWS Credentials</h3>
+                    <p>Configure your AWS credentials:</p>
+                    <pre><code>aws configure
+# Or set environment variables
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-east-1"</code></pre>
+                </section>
+
+                <section id="deployment">
+                    <h2>Deployment</h2>
+
+                    <h3>Terraform Deployment</h3>
+                    <p>The Terraform configuration is organized into modules:</p>
+                    <ul>
+                        <li><code>vpc/</code> - Virtual Private Cloud with subnets and routing</li>
+                        <li><code>ec2/</code> - Compute instances with security groups</li>
+                        <li><code>monitoring/</code> - CloudWatch dashboards and alarms</li>
+                        <li><code>oidc/</code> - GitHub Actions integration</li>
+                    </ul>
+
+                    <h3>Ansible Configuration</h3>
+                    <p>After Terraform provisions the infrastructure, Ansible configures the servers:</p>
+                    <pre><code># Test connectivity
+ansible all -m ping
+
+# Deploy web server configuration
+ansible-playbook playbooks/webserver.yml
+
+# Check deployment
+ansible all -m shell -a "systemctl status nginx"</code></pre>
+                </section>
+
+                <section id="configuration">
+                    <h2>Configuration</h2>
+
+                    <h3>Terraform Variables</h3>
+                    <p>Customize your deployment by editing <code>terraform.tfvars</code>:</p>
+                    <pre><code># General settings
+environment           = "production"
+aws_region           = "us-east-1"
+
+# Networking
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_count  = 2
+private_subnet_count = 2
+
+# Compute
+instance_type        = "t3.micro"
+instance_count       = 2
+allowed_ssh_cidr     = ["YOUR_IP/32"]
+
+# Monitoring
+cpu_threshold        = 80
+memory_threshold     = 80
+alarm_email_endpoints = ["alerts@example.com"]</code></pre>
+
+                    <h3>Ansible Variables</h3>
+                    <p>Edit the playbook to customize the web server configuration:</p>
+                    <pre><code>vars:
+  nginx_port: 80
+  nginx_ssl_port: 443
+  app_directory: /var/www/html
+  company_name: "Your Company"
+  environment: "production"</code></pre>
+                </section>
+
+                <section id="monitoring">
+                    <h2>Monitoring</h2>
+
+                    <h3>CloudWatch Dashboard</h3>
+                    <p>Access the CloudWatch dashboard in the AWS Console to view:</p>
+                    <ul>
+                        <li>CPU, Memory, and Disk utilization</li>
+                        <li>Network traffic</li>
+                        <li>Application logs</li>
+                        <li>Custom metrics</li>
+                    </ul>
+
+                    <h3>Alarms</h3>
+                    <p>Configured alarms will send notifications via SNS when thresholds are exceeded.</p>
+
+                    <h3>Health Checks</h3>
+                    <p>The health check endpoint is available at:</p>
+                    <pre><code>curl http://{{ ansible_default_ipv4.address }}/health</code></pre>
+                </section>
+
+                <section id="security">
+                    <h2>Security</h2>
+
+                    <h3>Best Practices Implemented</h3>
+                    <ul>
+                        <li>Encryption at rest for EBS volumes</li>
+                        <li>Encryption in transit with TLS</li>
+                        <li>VPC Flow Logs enabled</li>
+                        <li>Security groups with least privilege</li>
+                        <li>IMDSv2 enforcement</li>
+                        <li>Regular security scanning</li>
+                    </ul>
+
+                    <h3>Security Scanning</h3>
+                    <p>Run security scans manually:</p>
+                    <pre><code># Terraform security scan
+cd terraform
+tfsec .
+checkov -d .
+
+# Ansible linting
+cd ../ansible
+ansible-lint playbooks/</code></pre>
+                </section>
+
+                <section id="troubleshooting">
+                    <h2>Troubleshooting</h2>
+
+                    <h3>Common Issues</h3>
+
+                    <h4>Terraform State Lock</h4>
+                    <pre><code># View lock info
+aws dynamodb get-item --table-name terraform-locks \
+  --key '{"LockID": {"S": "your-state-bucket/terraform.tfstate-md5"}}'
+
+# Force unlock (use with caution)
+terraform force-unlock LOCK_ID</code></pre>
+
+                    <h4>Ansible Connection Issues</h4>
+                    <pre><code># Test AWS credentials
+aws sts get-caller-identity
+
+# Verify dynamic inventory
+ansible-inventory -i inventory/aws_ec2.yml --list
+
+# Use SSM for access
+aws ssm start-session --target i-xxxxx</code></pre>
+
+                    <h4>Service Not Starting</h4>
+                    <pre><code># Check service status
+systemctl status nginx
+
+# View logs
+journalctl -u nginx -n 50
+
+# Test configuration
+nginx -t</code></pre>
+                </section>
+
+                <section id="api">
+                    <h2>API Reference</h2>
+
+                    <h3>Available Endpoints</h3>
+
+                    <h4>GET /health</h4>
+                    <p>Health check endpoint</p>
+                    <pre><code>curl http://{{ ansible_default_ipv4.address }}/health
+# Response: OK</code></pre>
+
+                    <h4>GET /</h4>
+                    <p>Main application page with infrastructure information</p>
+
+                    <h4>GET /docs</h4>
+                    <p>This documentation page</p>
+
+                    <h3>Response Codes</h3>
+                    <ul>
+                        <li><code>200 OK</code> - Request successful</li>
+                        <li><code>404 Not Found</code> - Resource not found</li>
+                        <li><code>500 Internal Server Error</code> - Server error</li>
+                        <li><code>503 Service Unavailable</code> - Service temporarily unavailable</li>
+                    </ul>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; {{ ansible_date_time.year }} {{ company_name | default('SecureCloud') }}. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
