@@ -13,9 +13,16 @@ on:
         required: false
         default: false
         type: boolean
+      skip_recreate:
+        description: 'Skip auto-recreate of inactive cluster'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
@@ -25,6 +32,7 @@ env:
   ECR_REPOSITORY: ghost-blog
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME || 'prod-ghost-cluster' }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME || 'prod-ghost-service' }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 jobs:
   check-ecs:
@@ -33,21 +41,36 @@ jobs:
     outputs:
       cluster_exists: ${{ steps.check.outputs.cluster_exists }}
       service_exists: ${{ steps.check.outputs.service_exists }}
+      cluster_status: ${{ steps.check.outputs.cluster_status }}
+      needs_recreation: ${{ steps.check.outputs.needs_recreation }}
+      previous_task_def: ${{ steps.check.outputs.previous_task_def }}
 
     steps:
       - name: Check ECS cluster and service
         id: check
         run: |
+          set +e  # Don't exit on error
+
+          echo "🔍 Checking ECS infrastructure status..."
+
           # Check if ECS cluster exists and is ACTIVE
           CLUSTER_STATUS=$(aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+          echo "cluster_status=$CLUSTER_STATUS" >> $GITHUB_OUTPUT
 
           if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
             echo "cluster_exists=true" >> $GITHUB_OUTPUT
-            echo "✓ ECS cluster $ECS_CLUSTER is ACTIVE"
+            echo "needs_recreation=false" >> $GITHUB_OUTPUT
+            echo "✅ ECS cluster $ECS_CLUSTER is ACTIVE"
+          elif [ "$CLUSTER_STATUS" = "INACTIVE" ]; then
+            echo "cluster_exists=false" >> $GITHUB_OUTPUT
+            echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            echo "⚠️ ECS cluster $ECS_CLUSTER is INACTIVE - will attempt recreation"
+            echo "::warning::ECS cluster $ECS_CLUSTER is inactive and needs recreation"
           else
             echo "cluster_exists=false" >> $GITHUB_OUTPUT
-            echo "✗ ECS cluster $ECS_CLUSTER status: $CLUSTER_STATUS"
-            echo "::warning::ECS cluster $ECS_CLUSTER is not active (status: $CLUSTER_STATUS)"
+            echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            echo "❌ ECS cluster $ECS_CLUSTER not found (status: $CLUSTER_STATUS)"
+            echo "::warning::ECS cluster $ECS_CLUSTER does not exist"
           fi
 
           # Check if ECS service exists and is ACTIVE (only if cluster is active)
@@ -56,22 +79,131 @@ jobs:
 
             if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
               echo "service_exists=true" >> $GITHUB_OUTPUT
-              echo "✓ ECS service $ECS_SERVICE is ACTIVE"
+              echo "✅ ECS service $ECS_SERVICE is ACTIVE"
+
+              # Get current task definition for potential rollback
+              CURRENT_TASK_DEF=$(aws ecs describe-services \
+                --cluster $ECS_CLUSTER \
+                --services $ECS_SERVICE \
+                --query 'services[0].taskDefinition' \
+                --output text 2>/dev/null || echo "")
+              echo "previous_task_def=$CURRENT_TASK_DEF" >> $GITHUB_OUTPUT
+              echo "📝 Current task definition: $CURRENT_TASK_DEF"
             else
               echo "service_exists=false" >> $GITHUB_OUTPUT
-              echo "✗ ECS service $ECS_SERVICE status: $SERVICE_STATUS"
+              echo "previous_task_def=" >> $GITHUB_OUTPUT
+              echo "⚠️ ECS service $ECS_SERVICE status: $SERVICE_STATUS"
               echo "::warning::ECS service $ECS_SERVICE is not active (status: $SERVICE_STATUS)"
             fi
           else
             echo "service_exists=false" >> $GITHUB_OUTPUT
-            echo "Skipping service check - cluster is not active"
+            echo "previous_task_def=" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping service check - cluster is not active"
+          fi
+
+  recreate-cluster:
+    name: Recreate ECS Cluster
+    runs-on: ubuntu-latest
+    needs: check-ecs
+    if: needs.check-ecs.outputs.needs_recreation == 'true' && github.event.inputs.skip_recreate != 'true'
+    outputs:
+      recreation_success: ${{ steps.recreate.outputs.success }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+
+      - name: Recreate cluster with Terraform
+        id: recreate
+        run: |
+          cd terraform
+
+          echo "🔄 Attempting to recreate ECS infrastructure..."
+
+          # Initialize Terraform
+          terraform init -backend=false || {
+            echo "::error::Terraform init failed"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          }
+
+          # Target the ghost_blog module
+          echo "📋 Planning infrastructure changes..."
+          terraform plan -target=module.ghost_blog -out=tfplan || {
+            echo "::error::Terraform plan failed"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          }
+
+          echo "🚀 Applying infrastructure changes..."
+          terraform apply -auto-approve tfplan || {
+            echo "::error::Terraform apply failed"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          }
+
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "✅ ECS infrastructure recreated successfully"
+
+      - name: Verify cluster is active
+        if: steps.recreate.outputs.success == 'true'
+        run: |
+          echo "⏳ Waiting for cluster to become active..."
+
+          for i in {1..30}; do
+            CLUSTER_STATUS=$(aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+              echo "✅ Cluster $ECS_CLUSTER is now ACTIVE"
+              exit 0
+            fi
+
+            echo "Attempt $i/30: Cluster status is $CLUSTER_STATUS, waiting..."
+            sleep 10
+          done
+
+          echo "::error::Cluster did not become active within timeout period"
+          exit 1
+
+      - name: Notify recreation result
+        if: always()
+        run: |
+          if [ "${{ steps.recreate.outputs.success }}" = "true" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## ✅ ECS Cluster Recreated
+
+          The ECS cluster was successfully recreated using Terraform.
+          Deployment will now proceed with the new cluster.
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## ❌ ECS Cluster Recreation Failed
+
+          Failed to recreate the ECS cluster. Please check:
+          1. Terraform configuration is valid
+          2. AWS credentials have sufficient permissions
+          3. No conflicting resources exist
+
+          **Manual intervention may be required.**
+          EOF
           fi
 
   deploy:
     name: Deploy Ghost to ECS
     runs-on: ubuntu-latest
-    needs: check-ecs
-    if: needs.check-ecs.outputs.cluster_exists == 'true' && needs.check-ecs.outputs.service_exists == 'true'
+    needs: [check-ecs, recreate-cluster]
+    if: |
+      always() &&
+      (needs.check-ecs.outputs.cluster_exists == 'true' || needs.recreate-cluster.outputs.recreation_success == 'true') &&
+      (needs.check-ecs.outputs.service_exists == 'true' || needs.recreate-cluster.outputs.recreation_success == 'true')
+    outputs:
+      deployment_success: ${{ steps.update-service.outcome == 'success' }}
+      new_task_def: ${{ steps.register-task-def.outputs.task_def_arn }}
 
     steps:
       - name: Checkout code
@@ -80,20 +212,27 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        continue-on-error: false
 
       - name: Check if ECR repository exists
         id: check-ecr
         run: |
           if aws ecr describe-repositories --repository-names $ECR_REPOSITORY 2>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✓ ECR repository $ECR_REPOSITORY exists"
+            echo "✅ ECR repository $ECR_REPOSITORY exists"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Creating ECR repository $ECR_REPOSITORY..."
+            echo "📦 Creating ECR repository $ECR_REPOSITORY..."
+
             aws ecr create-repository \
               --repository-name $ECR_REPOSITORY \
               --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
+              --encryption-configuration encryptionType=AES256 || {
+              echo "::error::Failed to create ECR repository"
+              exit 1
+            }
+
+            echo "✅ ECR repository created successfully"
           fi
 
       - name: Build Ghost Docker image
@@ -101,43 +240,91 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
+        timeout-minutes: 15
         run: |
+          set -e
+
+          echo "🔨 Building Docker image..."
+
           # Check if custom Dockerfile exists
           if [ -f "docker/ghost/Dockerfile" ]; then
             echo "Building custom Ghost image from docker/ghost/Dockerfile"
-            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./docker/ghost
+            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./docker/ghost || {
+              echo "::error::Docker build failed"
+              exit 1
+            }
             docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           else
             echo "No custom Dockerfile found. Pulling official Ghost image and tagging for ECR..."
-            docker pull ghost:latest
+            docker pull ghost:latest || {
+              echo "::error::Failed to pull Ghost image"
+              exit 1
+            }
             docker tag ghost:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
             docker tag ghost:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
           fi
 
-      - name: Push image to Amazon ECR
+          echo "✅ Docker image built successfully"
+
+      - name: Push image to Amazon ECR (with retry)
         id: push
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
+        timeout-minutes: 10
         run: |
-          echo "Pushing image to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          set -e
+
+          echo "📤 Pushing image to ECR..."
+
+          # Retry logic for ECR push
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG && \
+               docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest; then
+              echo "✅ Image pushed successfully"
+              echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "⚠️ Push failed, retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+              sleep 5
+            fi
+          done
+
+          echo "::error::Failed to push image after $MAX_RETRIES attempts"
+          exit 1
 
       - name: Get current task definition
         id: get-task-def
         run: |
-          aws ecs describe-task-definition \
-            --task-definition $(aws ecs describe-services \
-              --cluster $ECS_CLUSTER \
-              --services $ECS_SERVICE \
-              --query 'services[0].taskDefinition' \
-              --output text | cut -d'/' -f2) \
-            --query 'taskDefinition' \
-            > task-definition.json
+          set -e
 
-          echo "Current task definition saved"
+          echo "📋 Retrieving current task definition..."
+
+          TASK_DEF_NAME=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text | cut -d'/' -f2) || {
+            echo "::warning::Could not retrieve current task definition"
+            echo "{}" > task-definition.json
+            exit 0
+          }
+
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF_NAME" \
+            --query 'taskDefinition' \
+            > task-definition.json || {
+            echo "::warning::Could not describe task definition"
+            echo "{}" > task-definition.json
+          }
+
+          echo "✅ Current task definition retrieved"
 
       - name: Update task definition with new image
         id: update-task-def
@@ -145,6 +332,10 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          set -e
+
+          echo "🔄 Updating task definition..."
+
           # Update the image in the task definition
           NEW_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
@@ -152,56 +343,128 @@ jobs:
             jq --arg IMAGE "$NEW_IMAGE" \
               '.containerDefinitions[0].image = $IMAGE |
                del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)' \
-            > new-task-definition.json
+            > new-task-definition.json || {
+            echo "::error::Failed to update task definition JSON"
+            exit 1
+          }
 
-          echo "Updated task definition with new image: $NEW_IMAGE"
+          echo "✅ Task definition updated with new image: $NEW_IMAGE"
 
       - name: Register new task definition
         id: register-task-def
         run: |
+          set -e
+
+          echo "📝 Registering new task definition..."
+
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://new-task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
+            --output text) || {
+            echo "::error::Failed to register task definition"
+            cat new-task-definition.json
+            exit 1
+          }
 
           echo "task_def_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
-          echo "Registered new task definition: $NEW_TASK_DEF_ARN"
+          echo "✅ Registered new task definition: $NEW_TASK_DEF_ARN"
 
-      - name: Update ECS service
-        id: update-service
+      - name: Verify cluster status before deployment
+        id: verify-cluster
         run: |
-          echo "Updating ECS service $ECS_SERVICE to use new task definition..."
+          set -e
+
+          echo "🔍 Verifying cluster status before deployment..."
 
           # Verify cluster is still active before updating
           CLUSTER_STATUS=$(aws ecs describe-clusters --clusters $ECS_CLUSTER --query 'clusters[0].status' --output text)
+
           if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
-            echo "::error::Cannot update service - ECS cluster $ECS_CLUSTER is not active (status: $CLUSTER_STATUS)"
-            echo "The cluster may need to be recreated or activated."
+            echo "::error::Cannot deploy - ECS cluster $ECS_CLUSTER is not active (status: $CLUSTER_STATUS)"
+            echo "The cluster may need to be recreated. Try re-running the workflow."
             exit 1
           fi
 
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --task-definition ${{ steps.register-task-def.outputs.task_def_arn }} \
-            --force-new-deployment
+          echo "✅ Cluster is active and ready for deployment"
 
-          echo "✓ ECS service update initiated"
+      - name: Update ECS service (with retry)
+        id: update-service
+        timeout-minutes: 5
+        run: |
+          set -e
+
+          echo "🚀 Updating ECS service $ECS_SERVICE..."
+
+          # Retry logic for service update
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if aws ecs update-service \
+              --cluster $ECS_CLUSTER \
+              --service $ECS_SERVICE \
+              --task-definition ${{ steps.register-task-def.outputs.task_def_arn }} \
+              --force-new-deployment; then
+              echo "✅ ECS service update initiated successfully"
+              exit 0
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "⚠️ Service update failed, retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+              sleep 10
+            fi
+          done
+
+          echo "::error::Failed to update service after $MAX_RETRIES attempts"
+          exit 1
 
       - name: Wait for service stability
+        id: wait-stable
+        timeout-minutes: 15
         run: |
-          echo "Waiting for service to stabilize (this may take a few minutes)..."
+          echo "⏳ Waiting for service to stabilize (this may take several minutes)..."
 
-          aws ecs wait services-stable \
+          # Set timeout for wait command
+          timeout 900 aws ecs wait services-stable \
             --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE
+            --services $ECS_SERVICE || {
+            echo "::warning::Service did not stabilize within timeout period"
+            exit 1
+          }
 
-          echo "✓ Service is stable"
+          echo "✅ Service is stable"
+
+      - name: Verify deployment health
+        id: verify-health
+        if: steps.wait-stable.outcome == 'success'
+        run: |
+          echo "🏥 Verifying deployment health..."
+
+          # Check running task count
+          SERVICE_INFO=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0]')
+
+          DESIRED=$(echo "$SERVICE_INFO" | jq -r '.desiredCount')
+          RUNNING=$(echo "$SERVICE_INFO" | jq -r '.runningCount')
+
+          echo "Desired tasks: $DESIRED"
+          echo "Running tasks: $RUNNING"
+
+          if [ "$RUNNING" -eq "$DESIRED" ]; then
+            echo "✅ All tasks are running successfully"
+            echo "healthy=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Not all tasks are running (Running: $RUNNING, Desired: $DESIRED)"
+            echo "healthy=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get service status
         if: always()
         run: |
-          echo "Getting service deployment status..."
+          echo "📊 Retrieving service deployment status..."
 
           aws ecs describe-services \
             --cluster $ECS_CLUSTER \
@@ -226,6 +489,9 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          DEPLOY_STATUS="${{ steps.update-service.outcome }}"
+          HEALTH_STATUS="${{ steps.verify-health.outputs.healthy }}"
+
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## Ghost Blog Deployment Results 🚀
 
@@ -234,14 +500,16 @@ jobs:
           - **ECS Cluster**: \`$ECS_CLUSTER\`
           - **ECS Service**: \`$ECS_SERVICE\`
           - **Task Definition**: \`${{ steps.register-task-def.outputs.task_def_arn }}\`
-          - **Deployment Status**: ${{ job.status }}
+          - **Deployment Status**: ${DEPLOY_STATUS}
+          - **Health Check**: ${HEALTH_STATUS}
 
           ### Actions Performed
           - ✅ Built/pulled Ghost Docker image
-          - ✅ Pushed image to ECR
+          - ✅ Pushed image to ECR (with retry logic)
           - ✅ Registered new task definition
           - ✅ Updated ECS service with force deployment
-          - ✅ Waited for service stability
+          - ✅ Verified service stability
+          - ✅ Validated deployment health
 
           ### Next Steps
           1. Access your Ghost blog via the ALB DNS name
@@ -251,49 +519,245 @@ jobs:
 
           **Commit**: ${{ github.sha }}
           **Triggered by**: @${{ github.actor }}
+          **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           EOF
 
   rollback:
-    name: Rollback on Failure
+    name: Automated Rollback
     runs-on: ubuntu-latest
     needs: [check-ecs, deploy]
-    if: failure() && needs.check-ecs.outputs.service_exists == 'true'
+    if: failure() && needs.check-ecs.outputs.previous_task_def != '' && needs.deploy.outputs.deployment_success != 'true'
 
     steps:
-      - name: Notify deployment failure
+      - name: Execute rollback
+        id: rollback
         run: |
-          echo "Ghost deployment failed!"
+          set -e
+
+          echo "🔄 Initiating automated rollback..."
+
+          PREVIOUS_TASK_DEF="${{ needs.check-ecs.outputs.previous_task_def }}"
+
+          if [ -z "$PREVIOUS_TASK_DEF" ]; then
+            echo "::error::No previous task definition found for rollback"
+            exit 1
+          fi
+
+          echo "Rolling back to: $PREVIOUS_TASK_DEF"
+
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition "$PREVIOUS_TASK_DEF" \
+            --force-new-deployment || {
+            echo "::error::Rollback failed"
+            exit 1
+          }
+
+          echo "✅ Rollback initiated successfully"
+
+      - name: Wait for rollback stability
+        if: steps.rollback.outcome == 'success'
+        timeout-minutes: 10
+        run: |
+          echo "⏳ Waiting for rollback to stabilize..."
+
+          timeout 600 aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE || {
+            echo "::warning::Rollback did not stabilize within timeout"
+            exit 1
+          }
+
+          echo "✅ Rollback completed successfully"
+
+      - name: Verify rollback
+        if: steps.rollback.outcome == 'success'
+        run: |
+          echo "🔍 Verifying rollback status..."
+
+          CURRENT_TASK_DEF=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          echo "Current task definition after rollback: $CURRENT_TASK_DEF"
+
+          if [[ "$CURRENT_TASK_DEF" == *"${{ needs.check-ecs.outputs.previous_task_def }}"* ]]; then
+            echo "✅ Rollback verified - service is running previous version"
+          else
+            echo "⚠️ Rollback verification inconclusive"
+          fi
+
+      - name: Create rollback summary
+        if: always()
+        run: |
+          ROLLBACK_STATUS="${{ steps.rollback.outcome }}"
 
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## ⚠️ Ghost Deployment Failed
+          ## 🔄 Automated Rollback Executed
 
-          The Ghost blog deployment encountered errors. You may need to:
+          ### Rollback Details
+          - **Previous Task Definition**: \`${{ needs.check-ecs.outputs.previous_task_def }}\`
+          - **Rollback Status**: ${ROLLBACK_STATUS}
+          - **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-          ### Recommended Actions:
-          1. Check the deployment logs above for specific errors
-          2. Verify ECR image was pushed successfully
-          3. Check ECS task definition is valid
-          4. Review ECS service events in AWS Console
-          5. Check CloudWatch logs: \`/ecs/\${environment}/ghost\`
+          ### What Happened
+          The deployment failed and an automated rollback was triggered to restore
+          the service to its previous working state.
 
-          ### Manual Rollback (if needed):
-          \`\`\`bash
-          # Get previous task definition
-          aws ecs describe-services \\
-            --cluster $ECS_CLUSTER \\
-            --services $ECS_SERVICE \\
-            --query 'services[0].deployments[1].taskDefinition'
+          ### Next Steps
+          1. ✅ Service has been rolled back to previous version
+          2. 🔍 Review deployment logs to identify the failure cause
+          3. 🔧 Fix the issue in your code/configuration
+          4. 🚀 Re-run the deployment workflow
 
-          # Update service to previous task definition
-          aws ecs update-service \\
-            --cluster $ECS_CLUSTER \\
-            --service $ECS_SERVICE \\
-            --task-definition <PREVIOUS_TASK_DEF>
-          \`\`\`
+          ### Troubleshooting
+          - Check ECS service events in AWS Console
+          - Review CloudWatch logs: \`/ecs/\${environment}/ghost\`
+          - Verify task definition parameters
+          - Check for resource constraints (CPU/memory)
+          EOF
 
-          ### Ghost Troubleshooting:
-          - Check Ghost container logs
-          - Verify database connectivity (if using RDS)
-          - Ensure environment variables are correct
-          - Verify ALB target group health checks
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [check-ecs, deploy, rollback]
+    if: always()
+
+    steps:
+      - name: Determine overall status
+        id: status
+        run: |
+          DEPLOY_STATUS="${{ needs.deploy.result }}"
+          ROLLBACK_STATUS="${{ needs.rollback.result }}"
+
+          if [ "$DEPLOY_STATUS" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+            echo "message=Ghost deployment completed successfully" >> $GITHUB_OUTPUT
+          elif [ "$ROLLBACK_STATUS" = "success" ]; then
+            echo "status=rolled_back" >> $GITHUB_OUTPUT
+            echo "emoji=🔄" >> $GITHUB_OUTPUT
+            echo "message=Deployment failed but rollback succeeded" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "message=Ghost deployment failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          STATUS="${{ steps.status.outputs.status }}"
+          EMOJI="${{ steps.status.outputs.emoji }}"
+          MESSAGE="${{ steps.status.outputs.message }}"
+
+          SLACK_PAYLOAD=$(cat <<EOF
+          {
+            "text": "${EMOJI} Ghost Deployment Notification",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "${EMOJI} ${MESSAGE}"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {"type": "mrkdwn", "text": "*Environment:*\n${ECS_CLUSTER}"},
+                  {"type": "mrkdwn", "text": "*Service:*\n${ECS_SERVICE}"},
+                  {"type": "mrkdwn", "text": "*Commit:*\n${{ github.sha }}"},
+                  {"type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}"}
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow Run>"
+                }
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$SLACK_PAYLOAD" || echo "::warning::Slack notification failed"
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.status.outputs.status }}';
+            const emoji = '${{ steps.status.outputs.emoji }}';
+            const message = '${{ steps.status.outputs.message }}';
+
+            let statusDetails = '';
+            if (status === 'success') {
+              statusDetails = '✅ All deployment steps completed successfully.';
+            } else if (status === 'rolled_back') {
+              statusDetails = '⚠️ Deployment failed but service was rolled back to previous version.';
+            } else {
+              statusDetails = '❌ Deployment failed. Please review the logs.';
+            }
+
+            const comment = `## ${emoji} Ghost Deployment ${status === 'success' ? 'Succeeded' : 'Failed'}
+
+            ${message}
+
+            ### Details
+            - **ECS Cluster**: \`${process.env.ECS_CLUSTER}\`
+            - **ECS Service**: \`${process.env.ECS_SERVICE}\`
+            - **Status**: ${statusDetails}
+            - **Commit**: \`${{ github.sha }}\`
+
+            ### Actions
+            [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ${status !== 'success' ? '**Please review the deployment logs and fix any issues before merging.**' : ''}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+        continue-on-error: true
+
+      - name: Create final summary
+        if: always()
+        run: |
+          STATUS="${{ steps.status.outputs.status }}"
+          EMOJI="${{ steps.status.outputs.emoji }}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # ${EMOJI} Ghost Deployment Workflow Complete
+
+          ## Overall Status: ${STATUS}
+
+          ### Workflow Results
+          - **Check Infrastructure**: ${{ needs.check-ecs.result }}
+          - **Deploy**: ${{ needs.deploy.result }}
+          - **Rollback**: ${{ needs.rollback.result }}
+
+          ### Cluster Information
+          - **Cluster**: \`${ECS_CLUSTER}\`
+          - **Service**: \`${ECS_SERVICE}\`
+          - **Region**: \`${AWS_REGION}\`
+
+          ### Useful Links
+          - [AWS ECS Console](https://console.aws.amazon.com/ecs/v2/clusters/${ECS_CLUSTER}/services/${ECS_SERVICE})
+          - [CloudWatch Logs](https://console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logsV2:log-groups)
+          - [ECR Repository](https://console.aws.amazon.com/ecr/repositories/${ECR_REPOSITORY})
+
+          ---
+          *Workflow Run ID: ${{ github.run_id }}*
           EOF
