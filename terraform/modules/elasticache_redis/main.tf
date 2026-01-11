@@ -81,8 +81,8 @@ resource "aws_elasticache_parameter_group" "ghost" {
 
 # ElastiCache Replication Group (Redis Cluster)
 resource "aws_elasticache_replication_group" "ghost" {
-  replication_group_id       = "${var.environment}-ghost-redis"
-  replication_group_description = "Redis cluster for Ghost blog caching and sessions"
+  replication_group_id          = "${var.environment}-ghost-redis"
+  description = "Redis cluster for Ghost blog caching and sessions"
 
   engine         = "redis"
   engine_version = var.redis_version
@@ -91,7 +91,7 @@ resource "aws_elasticache_replication_group" "ghost" {
   # Cluster configuration
   num_cache_clusters         = var.num_cache_nodes
   automatic_failover_enabled = var.num_cache_nodes > 1
-  multi_az_enabled          = var.multi_az_enabled
+  multi_az_enabled           = var.multi_az_enabled
 
   # Network configuration
   subnet_group_name  = aws_elasticache_subnet_group.ghost.name
@@ -107,9 +107,9 @@ resource "aws_elasticache_replication_group" "ghost" {
   snapshot_retention_limit = var.snapshot_retention_limit
 
   # Security
-  at_rest_encryption_enabled = var.at_rest_encryption_enabled
-  transit_encryption_enabled = var.transit_encryption_enabled
-  auth_token                = var.transit_encryption_enabled ? random_password.redis_auth_token[0].result : null
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  auth_token                 = var.transit_encryption_enabled ? random_password.redis_auth_token[0].result : null
 
   # Automatic minor version upgrade
   auto_minor_version_upgrade = var.auto_minor_version_upgrade
