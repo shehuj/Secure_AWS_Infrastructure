@@ -160,7 +160,7 @@ make watch ENV=dev APP=webapp
 
 **Environment Variables:**
 ```yaml
-TF_VERSION: '1.6.0'
+TF_VERSION: '1.7.0'
 AWS_REGION: 'us-east-1'
 ```
 

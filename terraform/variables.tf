@@ -104,23 +104,6 @@ variable "allowed_ssh_cidr" {
   default     = []
 }
 
-variable "allowed_http_cidr" {
-  description = "CIDR blocks allowed HTTP access"
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
-variable "allowed_https_cidr" {
-  description = "CIDR blocks allowed HTTPS access"
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
-variable "enable_public_ip" {
-  description = "Associate public IP with instances"
-  type        = bool
-  default     = true
-}
 
 variable "root_volume_size" {
   description = "Size of root volume in GB"
