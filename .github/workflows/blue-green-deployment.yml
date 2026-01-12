@@ -1,0 +1,283 @@
+name: Blue-Green Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'Dockerfile'
+      - '.github/workflows/blue-green-deployment.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      image_tag:
+        description: 'Docker image tag'
+        required: true
+        default: 'latest'
+      wait_for_deployment:
+        description: 'Wait for deployment completion'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  AWS_REGION: 'us-east-1'
+  ECR_REPOSITORY: 'webapp'
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to ECS (Blue-Green)
+        run: |
+          chmod +x scripts/blue-green/deploy.sh
+          ./scripts/blue-green/deploy.sh \
+            -e dev \
+            -a webapp \
+            -i ${{ needs.build-and-push.outputs.image_tag }} \
+            -r ${{ env.AWS_REGION }} \
+            --wait
+
+      - name: Verify Deployment
+        run: |
+          chmod +x scripts/blue-green/status.sh
+          ./scripts/blue-green/status.sh -e dev -a webapp -r ${{ env.AWS_REGION }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to ECS (Blue-Green)
+        run: |
+          chmod +x scripts/blue-green/deploy.sh
+          ./scripts/blue-green/deploy.sh \
+            -e staging \
+            -a webapp \
+            -i ${{ needs.build-and-push.outputs.image_tag }} \
+            -r ${{ env.AWS_REGION }} \
+            --wait
+
+      - name: Run Smoke Tests
+        run: |
+          # Get ALB DNS
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names staging-webapp-alb \
+            --region ${{ env.AWS_REGION }} \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          # Test production endpoint
+          curl -f -k https://$ALB_DNS/ || exit 1
+
+          # Test health endpoint
+          curl -f -k https://$ALB_DNS/api/health || exit 1
+
+      - name: Verify Deployment
+        run: |
+          chmod +x scripts/blue-green/status.sh
+          ./scripts/blue-green/status.sh -e staging -a webapp -r ${{ env.AWS_REGION }}
+
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment:
+      name: prod
+      url: https://webapp.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_PROD_ROLE_ARN }}
+          role-duration-seconds: 3600
+
+      - name: Pre-deployment Backup
+        run: |
+          # Backup current task definition
+          aws ecs describe-task-definition \
+            --task-definition prod-webapp \
+            --region ${{ env.AWS_REGION }} \
+            > task-definition-backup.json
+
+      - name: Deploy to ECS (Blue-Green)
+        id: deploy
+        run: |
+          chmod +x scripts/blue-green/deploy.sh
+          ./scripts/blue-green/deploy.sh \
+            -e prod \
+            -a webapp \
+            -i ${{ github.event.inputs.image_tag }} \
+            -r ${{ env.AWS_REGION }} \
+            ${{ github.event.inputs.wait_for_deployment && '--wait' || '' }}
+
+      - name: Monitor Deployment
+        if: github.event.inputs.wait_for_deployment == 'true'
+        run: |
+          chmod +x scripts/blue-green/status.sh
+          ./scripts/blue-green/status.sh -e prod -a webapp -r ${{ env.AWS_REGION }}
+
+      - name: Run Production Smoke Tests
+        run: |
+          # Get ALB DNS
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names prod-webapp-alb \
+            --region ${{ env.AWS_REGION }} \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          # Test production endpoint
+          for i in {1..5}; do
+            echo "Test attempt $i of 5"
+            if curl -f -k https://$ALB_DNS/; then
+              echo "Success!"
+              break
+            fi
+            if [ $i -eq 5 ]; then
+              echo "All tests failed, triggering rollback"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          echo "Deployment failed, initiating rollback..."
+          chmod +x scripts/blue-green/rollback.sh
+          ./scripts/blue-green/rollback.sh -e prod -a webapp -r ${{ env.AWS_REGION }}
+
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          text: |
+            Blue-Green Production Deployment ${{ job.status }}
+            Actor: ${{ github.actor }}
+            Image: ${{ github.event.inputs.image_tag }}
+            Environment: prod
+            Digest: ${{ needs.build-and-push.outputs.image_digest }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Create GitHub Release
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Production Release v${{ github.run_number }}
+          body: |
+            Production deployment completed successfully
+
+            **Image:** ${{ github.event.inputs.image_tag }}
+            **Digest:** ${{ needs.build-and-push.outputs.image_digest }}
+            **Deployed by:** ${{ github.actor }}
+
+            **Changes:**
+            ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false

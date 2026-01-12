@@ -1,0 +1,222 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  pr-labeler:
+    name: Auto Label PR
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Label PR
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  pr-size:
+    name: Check PR Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR size
+        run: |
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...${{ github.sha }} | wc -l)
+          LINES_CHANGED=$(git diff --stat origin/${{ github.base_ref }}...${{ github.sha }} | tail -n1 | awk '{print $4 + $6}')
+
+          echo "Files changed: $FILES_CHANGED"
+          echo "Lines changed: $LINES_CHANGED"
+
+          if [ $FILES_CHANGED -gt 50 ] || [ $LINES_CHANGED -gt 1000 ]; then
+            echo "⚠️ Large PR detected - consider breaking into smaller PRs"
+            echo "::warning::This PR is large. Consider breaking it into smaller, focused PRs."
+          fi
+
+  validate-commits:
+    name: Validate Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        run: |
+          COMMITS=$(git log --pretty=format:"%s" origin/${{ github.base_ref }}..${{ github.sha }})
+          INVALID=0
+
+          while IFS= read -r commit; do
+            # Check conventional commits format
+            if ! echo "$commit" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .{1,}$'; then
+              echo "⚠️ Invalid commit message: $commit"
+              INVALID=1
+            fi
+          done <<< "$COMMITS"
+
+          if [ $INVALID -eq 1 ]; then
+            echo "::warning::Some commits don't follow conventional commits format"
+          fi
+
+  terraform-validation:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.changed_files, 'terraform/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6.0'
+
+      - name: Terraform Format
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+
+  ansible-validation:
+    name: Ansible Validation
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.changed_files, 'ansible/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible ansible-lint yamllint
+
+      - name: Run yamllint
+        run: |
+          yamllint -c .yamllint ansible/
+
+      - name: Run ansible-lint
+        run: |
+          cd ansible
+          ansible-lint playbooks/*.yml --profile production
+
+  documentation-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for documentation updates
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...${{ github.sha }})
+
+          # Check if code changed but no docs updated
+          if echo "$FILES" | grep -qE '\.(tf|yml|yaml|sh)$' && ! echo "$FILES" | grep -q 'docs/'; then
+            echo "::warning::Code changes detected but no documentation updates. Consider updating docs."
+          fi
+
+      - name: Check markdown files
+        uses: actionshub/markdownlint@main
+
+      - name: Broken link check
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+
+  test-scripts:
+    name: Test Scripts
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.changed_files, 'scripts/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: './scripts'
+
+      - name: Test script permissions
+        run: |
+          find scripts -name "*.sh" -type f -exec test -x {} \; || {
+            echo "::error::Some shell scripts are not executable"
+            exit 1
+          }
+
+  pr-summary:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [pr-size, validate-commits, terraform-validation, ansible-validation, documentation-check, security-check, test-scripts]
+    if: always()
+    steps:
+      - name: Generate PR Summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## Pull Request Validation Summary
+
+            | Check | Status |
+            |-------|--------|
+            | PR Size | ${{ needs.pr-size.result }} |
+            | Commits | ${{ needs.validate-commits.result }} |
+            | Terraform | ${{ needs.terraform-validation.result }} |
+            | Ansible | ${{ needs.ansible-validation.result }} |
+            | Documentation | ${{ needs.documentation-check.result }} |
+            | Security | ${{ needs.security-check.result }} |
+            | Scripts | ${{ needs.test-scripts.result }} |
+
+            ${needs.pr-size.result === 'failure' ||
+              needs.validate-commits.result === 'failure' ||
+              needs.security-check.result === 'failure'
+              ? '⚠️ **Some checks require attention**'
+              : '✅ **All checks passed**'}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            })

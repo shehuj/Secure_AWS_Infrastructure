@@ -1,0 +1,248 @@
+name: Security Scanning
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  secret-scanning:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  terraform-security:
+    name: Terraform Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          soft_fail: false
+
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform/
+          soft_fail: false
+
+  ansible-security:
+    name: Ansible Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-lint
+        run: |
+          pip install ansible-lint
+
+      - name: Run ansible-lint security profile
+        run: |
+          cd ansible
+          ansible-lint playbooks/*.yml --profile production
+
+  dependency-scanning:
+    name: Dependency Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Snyk
+        uses: snyk/actions/iac@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          file: terraform/
+
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'Secure_AWS_Infrastructure'
+          path: '.'
+          format: 'ALL'
+
+      - name: Upload Dependency Check results
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: reports/
+
+  sast-scanning:
+    name: SAST Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run InSpec Tests
+        run: |
+          # Install InSpec
+          curl https://omnitruck.chef.io/install.sh | sudo bash -s -- -P inspec
+
+          # Run compliance tests if they exist
+          if [ -d "compliance" ]; then
+            inspec exec compliance/ --reporter cli json:compliance-results.json
+          fi
+
+      - name: Upload Compliance Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compliance-results
+          path: compliance-results.json
+
+  container-scanning:
+    name: Container Scanning
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Scan ECR images with Trivy
+        run: |
+          IMAGES=$(aws ecr list-images --repository-name webapp --query 'imageIds[*].imageTag' --output text)
+          for tag in $IMAGES; do
+            echo "Scanning image: $tag"
+            docker pull ${{ steps.login-ecr.outputs.registry }}/webapp:$tag
+            trivy image --severity HIGH,CRITICAL ${{ steps.login-ecr.outputs.registry }}/webapp:$tag
+          done
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, terraform-security, ansible-security, dependency-scanning, sast-scanning, compliance-check]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate Security Report
+        run: |
+          cat > security-report.md <<EOF
+          # Security Scan Report
+
+          **Date:** $(date)
+          **Repository:** ${{ github.repository }}
+          **Branch:** ${{ github.ref }}
+          **Commit:** ${{ github.sha }}
+
+          ## Scan Results
+
+          - Secret Scanning: ${{ needs.secret-scanning.result }}
+          - Terraform Security: ${{ needs.terraform-security.result }}
+          - Ansible Security: ${{ needs.ansible-security.result }}
+          - Dependency Scanning: ${{ needs.dependency-scanning.result }}
+          - SAST Scanning: ${{ needs.sast-scanning.result }}
+          - Compliance Check: ${{ needs.compliance-check.result }}
+
+          ## Actions Required
+
+          EOF
+
+          if [[ "${{ needs.secret-scanning.result }}" == "failure" ||
+                "${{ needs.terraform-security.result }}" == "failure" ||
+                "${{ needs.ansible-security.result }}" == "failure" ]]; then
+            echo "⚠️ **CRITICAL ISSUES FOUND** - Review and fix immediately" >> security-report.md
+          else
+            echo "✅ All security checks passed" >> security-report.md
+          fi
+
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.md
+
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔒 Security Scan Failed - ' + new Date().toISOString(),
+              body: 'Security scans have detected issues. Please review the security-report artifact.',
+              labels: ['security', 'urgent']
+            })

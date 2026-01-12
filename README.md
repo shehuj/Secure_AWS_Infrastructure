@@ -25,6 +25,20 @@ A production-ready, secure AWS infrastructure deployment using Infrastructure as
 
 ## Features
 
+### 🚀 Fully Automated Infrastructure
+
+**Zero-manual-effort deployment** with complete automation:
+
+- ✅ **Fully Automated CI/CD** - GitHub Actions workflows for all environments
+- ✅ **Pre-commit Validation** - Automated code quality and security checks
+- ✅ **Blue-Green Deployments** - Zero-downtime application releases
+- ✅ **Automated Testing** - Unit, integration, and idempotency tests
+- ✅ **Security Scanning** - Multiple security tools integrated
+- ✅ **Monitoring & Alerting** - Automated health checks and metrics
+- ✅ **Multi-Environment** - Dev, Staging, Production pipelines
+
+**Learn more**: See [Automation Guide](docs/AUTOMATION.md) for complete documentation.
+
 ### ✨ Idempotent Infrastructure
 
 This infrastructure is **fully idempotent** - you can run deployments multiple times with the same result:

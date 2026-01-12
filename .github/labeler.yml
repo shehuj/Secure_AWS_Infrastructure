@@ -1,0 +1,35 @@
+# GitHub PR Auto-Labeler Configuration
+
+terraform:
+  - terraform/**/*
+  - '*.tf'
+
+ansible:
+  - ansible/**/*
+  - '*.yml'
+  - '*.yaml'
+
+documentation:
+  - docs/**/*
+  - '*.md'
+  - README.md
+
+ci-cd:
+  - .github/workflows/**/*
+  - .pre-commit-config.yaml
+
+scripts:
+  - scripts/**/*
+  - '*.sh'
+
+security:
+  - .secrets.baseline
+  - .tflint.hcl
+  - .yamllint
+
+dependencies:
+  - '**/requirements.txt'
+  - '**/requirements.yml'
+  - package.json
+  - go.mod
+  - Gemfile
