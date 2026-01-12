@@ -68,12 +68,6 @@ variable "snapshot_retention_limit" {
   default     = 5
 }
 
-variable "at_rest_encryption_enabled" {
-  description = "Enable encryption at rest"
-  type        = bool
-  default     = true
-}
-
 variable "transit_encryption_enabled" {
   description = "Enable encryption in transit (requires auth token)"
   type        = bool

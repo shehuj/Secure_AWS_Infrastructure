@@ -65,7 +65,6 @@ module "monitoring" {
   alarm_email_endpoints    = var.alarm_email_endpoints
   cpu_threshold            = var.cpu_threshold
   memory_threshold         = var.memory_threshold
-  disk_threshold           = var.disk_threshold
   enable_memory_monitoring = var.enable_memory_monitoring
   create_dashboard         = var.create_dashboard
 
