@@ -1,0 +1,11 @@
+# Node modules and dependencies
+node_modules/
+.terraform/
+.terragrunt-cache/
+
+# Generated or auto-generated files
+CHANGELOG.md
+.github/PULL_REQUEST_TEMPLATE/
+
+# Large documentation that might have special formatting
+docs/AUTOMATION.md
