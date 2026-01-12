@@ -49,7 +49,6 @@ create_sns_topic         = false  # Set to true to create SNS topic for alarms
 alarm_email_endpoints    = []     # Example: ["devops@example.com"]
 cpu_threshold            = 80     # CPU alarm threshold (%)
 memory_threshold         = 80     # Memory alarm threshold (%)
-disk_threshold           = 80     # Disk alarm threshold (%)
 enable_memory_monitoring = true
 create_dashboard         = true   # Create CloudWatch dashboard
 

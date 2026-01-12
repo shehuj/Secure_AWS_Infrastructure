@@ -129,12 +129,6 @@ variable "memory_threshold" {
   default     = 80
 }
 
-variable "disk_threshold" {
-  description = "Disk utilization threshold for alarms (percentage)"
-  type        = number
-  default     = 80
-}
-
 variable "enable_memory_monitoring" {
   description = "Enable memory monitoring (requires CloudWatch agent)"
   type        = bool
