@@ -3,6 +3,10 @@
 # This example shows how to deploy a web application with zero-downtime
 # blue-green deployments using the ecs_bluegreen module.
 
+terraform {
+  required_version = ">= 1.7.0"
+}
+
 # ============================================
 # Prerequisites
 # ============================================

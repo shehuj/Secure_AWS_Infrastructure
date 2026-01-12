@@ -26,10 +26,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch base branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
+
       - name: Check PR size
         run: |
-          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...${{ github.sha }} | wc -l)
-          LINES_CHANGED=$(git diff --stat origin/${{ github.base_ref }}...${{ github.sha }} | tail -n1 | awk '{print $4 + $6}')
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+          LINES_CHANGED=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -n1 | awk '{print $4 + $6}')
 
           echo "Files changed: $FILES_CHANGED"
           echo "Lines changed: $LINES_CHANGED"
@@ -48,9 +52,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch base branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
+
       - name: Validate commit messages
         run: |
-          COMMITS=$(git log --pretty=format:"%s" origin/${{ github.base_ref }}..${{ github.sha }})
+          COMMITS=$(git log --pretty=format:"%s" origin/${{ github.base_ref }}..HEAD)
           INVALID=0
 
           while IFS= read -r commit; do
@@ -132,10 +140,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
 
       - name: Check for documentation updates
         run: |
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...${{ github.sha }})
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
 
           # Check if code changed but no docs updated
           if echo "$FILES" | grep -qE '\.(tf|yml|yaml|sh)$' && ! echo "$FILES" | grep -q 'docs/'; then

@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # ElastiCache Redis for Ghost - Enterprise Caching Layer
 # Provides managed Redis for sessions, caching, and performance
 

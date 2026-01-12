@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # RDS MySQL for Ghost Blog - Enterprise Grade
 # Provides managed, highly available MySQL database
 
