@@ -29,15 +29,10 @@ enable_vpc_flow_logs = true   # Enable VPC Flow Logs for security auditing
 
 # ALB + Auto Scaling Group Configuration
 instance_type  = "t3.micro"  # Instance type for ASG web servers
-key_pair_name  = "your-ssh-key"  # SSH key name in AWS for ASG instances
 
 # Storage Configuration
 root_volume_size = 20    # GB
 root_volume_type = "gp3" # gp3 recommended for better performance/cost
-
-# Security Configuration
-# IMPORTANT: Restrict SSH access! Empty list = SSH disabled (recommended for production)
-allowed_ssh_cidr = [] # Example: ["YOUR_IP/32"] to allow only your IP
 
 # SSL/TLS Certificate Configuration
 # REQUIRED: Provide ACM certificate ARN for HTTPS

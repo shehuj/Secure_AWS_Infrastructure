@@ -47,12 +47,6 @@ variable "grafana_admin_password" {
   default     = "changeme123"
 }
 
-variable "cloudwatch_metrics_namespaces" {
-  description = "CloudWatch namespaces to export to Prometheus"
-  type        = list(string)
-  default     = ["AWS/EC2", "AWS/ECS", "AWS/ApplicationELB"]
-}
-
 variable "ghost_service_name" {
   description = "Ghost ECS service name for monitoring"
   type        = string

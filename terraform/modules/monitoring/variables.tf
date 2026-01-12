@@ -84,12 +84,6 @@ variable "enable_memory_monitoring" {
   default     = true
 }
 
-variable "enable_disk_monitoring" {
-  description = "Enable disk monitoring (requires CloudWatch agent)"
-  type        = bool
-  default     = true
-}
-
 variable "create_dashboard" {
   description = "Create CloudWatch dashboard"
   type        = bool
