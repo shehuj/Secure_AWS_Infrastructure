@@ -22,10 +22,10 @@ module "webapp_blue_green" {
   app_name    = "webapp"
 
   # Network Configuration
-  vpc_id     = "vpc-xxxxxxxxxxxxx"  # Your VPC ID
+  vpc_id = "vpc-xxxxxxxxxxxxx" # Your VPC ID
   subnet_ids = [
-    "subnet-xxxxxxxxxxxxx",          # Public subnet 1
-    "subnet-yyyyyyyyyyyyy"           # Public subnet 2
+    "subnet-xxxxxxxxxxxxx", # Public subnet 1
+    "subnet-yyyyyyyyyyyyy"  # Public subnet 2
   ]
 
   # TLS Certificate
@@ -36,13 +36,13 @@ module "webapp_blue_green" {
   container_port  = 80
 
   # Resource Allocation
-  cpu           = 512    # 0.5 vCPU
-  memory        = 1024   # 1 GB
-  desired_count = 2      # 2 tasks for HA
+  cpu           = 512  # 0.5 vCPU
+  memory        = 1024 # 1 GB
+  desired_count = 2    # 2 tasks for HA
 
   # Security
   trusted_ip_ranges = [
-    "0.0.0.0/0"  # Allow from anywhere (restrict in production!)
+    "0.0.0.0/0" # Allow from anywhere (restrict in production!)
   ]
 
   # Health Check
@@ -50,10 +50,10 @@ module "webapp_blue_green" {
   health_check_matcher = "200"
 
   # Deployment Configuration
-  deployment_timeout_minutes        = 15
-  termination_wait_time_minutes     = 5
-  enable_auto_rollback              = true
-  enable_deletion_protection        = false  # Set true for production
+  deployment_timeout_minutes    = 15
+  termination_wait_time_minutes = 5
+  enable_auto_rollback          = true
+  enable_deletion_protection    = false # Set true for production
 
   # Logging
   log_retention_days = 7
