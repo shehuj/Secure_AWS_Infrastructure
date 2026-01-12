@@ -1,0 +1,280 @@
+name: Ansible CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/ansible-ci-cd.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'ansible/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      playbook:
+        description: 'Playbook to run'
+        required: true
+        type: choice
+        options:
+          - webserver.yml
+          - database.yml
+          - all
+
+env:
+  ANSIBLE_VERSION: '2.15'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install ansible-lint
+          pip install yamllint
+
+      - name: Run yamllint
+        run: |
+          yamllint -c .yamllint ansible/
+
+      - name: Run ansible-lint
+        run: |
+          cd ansible
+          ansible-lint playbooks/*.yml --profile production
+
+      - name: Ansible Syntax Check
+        run: |
+          cd ansible
+          for playbook in playbooks/*.yml; do
+            ansible-playbook "$playbook" --syntax-check
+          done
+
+  ansible-test:
+    name: Ansible Test (Molecule)
+    runs-on: ubuntu-latest
+    needs: ansible-lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install molecule molecule-plugins[docker]
+          pip install docker
+
+      - name: Run Molecule tests
+        run: |
+          cd ansible
+          if [ -d "molecule" ]; then
+            molecule test
+          else
+            echo "No molecule tests found, skipping"
+          fi
+
+  ansible-deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: [ansible-lint, ansible-test]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install boto3 botocore
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $(aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query 'Reservations[*].Instances[*].PublicIpAddress' --output text) >> ~/.ssh/known_hosts
+
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ansible-playbook playbooks/webserver.yml \
+            -i inventories/dev/hosts.yml \
+            -e "app_environment=dev" \
+            --diff
+
+      - name: Verify Deployment
+        run: |
+          cd ansible
+          ansible-playbook playbooks/verify.yml \
+            -i inventories/dev/hosts.yml
+
+  ansible-deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [ansible-lint, ansible-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install boto3 botocore
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ansible-playbook playbooks/webserver.yml \
+            -i inventories/staging/hosts.yml \
+            -e "app_environment=staging" \
+            --diff
+
+      - name: Verify Deployment
+        run: |
+          cd ansible
+          ansible-playbook playbooks/verify.yml \
+            -i inventories/staging/hosts.yml
+
+  ansible-deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [ansible-lint, ansible-test]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment:
+      name: prod
+      url: https://console.aws.amazon.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install boto3 botocore
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          role-to-assume: ${{ secrets.AWS_PROD_ROLE_ARN }}
+          role-duration-seconds: 3600
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY_PROD }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ansible-playbook playbooks/${{ github.event.inputs.playbook }} \
+            -i inventories/prod/hosts.yml \
+            -e "app_environment=prod" \
+            --diff \
+            --check
+
+      - name: Wait for approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: ${{ secrets.PROD_APPROVERS }}
+          minimum-approvals: 2
+
+      - name: Apply Changes
+        run: |
+          cd ansible
+          ansible-playbook playbooks/${{ github.event.inputs.playbook }} \
+            -i inventories/prod/hosts.yml \
+            -e "app_environment=prod" \
+            --diff
+
+      - name: Verify Deployment
+        run: |
+          cd ansible
+          ansible-playbook playbooks/verify.yml \
+            -i inventories/prod/hosts.yml
+
+      - name: Notify Deployment
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          text: |
+            Ansible Production Deployment ${{ job.status }}
+            Actor: ${{ github.actor }}
+            Playbook: ${{ github.event.inputs.playbook }}
+            Environment: prod
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
