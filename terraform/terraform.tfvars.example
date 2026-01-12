@@ -37,10 +37,7 @@ root_volume_type = "gp3" # gp3 recommended for better performance/cost
 
 # Security Configuration
 # IMPORTANT: Restrict SSH access! Empty list = SSH disabled (recommended for production)
-allowed_ssh_cidr   = []  # Example: ["YOUR_IP/32"] to allow only your IP
-allowed_http_cidr  = ["0.0.0.0/0"]  # Public HTTP access for ALB
-allowed_https_cidr = ["0.0.0.0/0"]  # Public HTTPS access for ALB
-enable_public_ip   = true  # ASG instances need public IPs if in public subnets
+allowed_ssh_cidr = [] # Example: ["YOUR_IP/32"] to allow only your IP
 
 # SSL/TLS Certificate Configuration
 # REQUIRED: Provide ACM certificate ARN for HTTPS
