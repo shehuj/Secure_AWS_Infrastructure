@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # Data sources
 data "aws_region" "current" {}
 

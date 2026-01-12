@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # CloudWatch Log Groups
 resource "aws_cloudwatch_log_group" "nginx_access" {
   name              = "/aws/ec2/${var.environment}/nginx/access"

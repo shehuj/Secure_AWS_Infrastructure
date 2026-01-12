@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # CloudWatch Log Group for Ghost container logs
 resource "aws_cloudwatch_log_group" "ghost" {
   name              = "/ecs/${var.environment}/ghost"

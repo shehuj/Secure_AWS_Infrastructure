@@ -1,3 +1,8 @@
+terraform {
+  required_version = ">= 1.7.0"
+}
+
+
 # Get available AZs
 data "aws_availability_zones" "available" {
   state = "available"
