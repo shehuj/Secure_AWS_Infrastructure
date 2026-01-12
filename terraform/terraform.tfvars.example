@@ -51,7 +51,6 @@ cpu_threshold            = 80     # CPU alarm threshold (%)
 memory_threshold         = 80     # Memory alarm threshold (%)
 disk_threshold           = 80     # Disk alarm threshold (%)
 enable_memory_monitoring = true
-enable_disk_monitoring   = true
 create_dashboard         = true   # Create CloudWatch dashboard
 
 # Observability Configuration (Prometheus + Grafana) - OPTIONAL
