@@ -80,30 +80,11 @@ variable "enable_vpc_flow_logs" {
 }
 
 # EC2 Variables
-variable "key_pair_name" {
-  description = "SSH key pair name for EC2 instances"
-  type        = string
-  default     = "key.pem"
-}
-
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
   default     = "t3.micro"
 }
-
-variable "instance_count" {
-  description = "Number of EC2 instances to launch"
-  type        = number
-  default     = 1
-}
-
-variable "allowed_ssh_cidr" {
-  description = "CIDR blocks allowed to SSH to instances (leave empty to disable SSH)"
-  type        = list(string)
-  default     = []
-}
-
 
 variable "root_volume_size" {
   description = "Size of root volume in GB"
@@ -156,12 +137,6 @@ variable "disk_threshold" {
 
 variable "enable_memory_monitoring" {
   description = "Enable memory monitoring (requires CloudWatch agent)"
-  type        = bool
-  default     = true
-}
-
-variable "enable_disk_monitoring" {
-  description = "Enable disk monitoring (requires CloudWatch agent)"
   type        = bool
   default     = true
 }

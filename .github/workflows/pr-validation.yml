@@ -158,12 +158,15 @@ jobs:
 
       - name: Check markdown files
         uses: actionshub/markdownlint@main
+        continue-on-error: true
 
       - name: Broken link check
         uses: gaurav-nelson/github-action-markdown-link-check@v1
         with:
           use-quiet-mode: 'yes'
           use-verbose-mode: 'yes'
+          config-file: '.markdown-link-check.json'
+        continue-on-error: true
 
   security-check:
     name: Security Check

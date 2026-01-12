@@ -67,7 +67,6 @@ module "monitoring" {
   memory_threshold         = var.memory_threshold
   disk_threshold           = var.disk_threshold
   enable_memory_monitoring = var.enable_memory_monitoring
-  enable_disk_monitoring   = var.enable_disk_monitoring
   create_dashboard         = var.create_dashboard
 
   # ASG/ALB metrics
@@ -113,13 +112,6 @@ module "observability" {
   ghost_service_name        = module.ghost_blog.ecs_service_name
   grafana_admin_password    = var.grafana_admin_password
   prometheus_retention_days = var.prometheus_retention_days
-
-  cloudwatch_metrics_namespaces = [
-    "AWS/EC2",
-    "AWS/ECS",
-    "AWS/ApplicationELB",
-    "AWS/EFS"
-  ]
 
   tags = var.tags
 

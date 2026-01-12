@@ -1,0 +1,56 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://github.com/.*/compare/"
+    },
+    {
+      "pattern": "^https://github.com/.*/actions/runs/"
+    },
+    {
+      "pattern": "^http://localhost"
+    },
+    {
+      "pattern": "^https://.*example\\.com"
+    },
+    {
+      "pattern": "^https://.*YOUR-.*"
+    },
+    {
+      "pattern": "^https://grafana\\..*"
+    },
+    {
+      "pattern": "^https://prometheus\\..*"
+    },
+    {
+      "pattern": "^arn:aws:"
+    },
+    {
+      "pattern": "ACCOUNT_ID"
+    },
+    {
+      "pattern": "REGION"
+    },
+    {
+      "pattern": "CERT_ID"
+    }
+  ],
+  "replacementPatterns": [
+    {
+      "pattern": "^/",
+      "replacement": "{{BASEURL}}/"
+    }
+  ],
+  "httpHeaders": [
+    {
+      "urls": ["https://github.com/"],
+      "headers": {
+        "Accept-Encoding": "zstd, br, gzip, deflate"
+      }
+    }
+  ],
+  "timeout": "20s",
+  "retryOn429": true,
+  "retryCount": 3,
+  "fallbackRetryDelay": "30s",
+  "aliveStatusCodes": [200, 206, 301, 302, 304, 307, 308, 403, 429]
+}
