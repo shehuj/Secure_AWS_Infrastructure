@@ -1,35 +1,56 @@
 # GitHub PR Auto-Labeler Configuration
+# Format for actions/labeler@v5
 
 terraform:
-  - terraform/**/*
-  - '*.tf'
+  - changed-files:
+    - any-glob-to-any-file: 'terraform/**/*'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.tf'
 
 ansible:
-  - ansible/**/*
-  - '*.yml'
-  - '*.yaml'
+  - changed-files:
+    - any-glob-to-any-file: 'ansible/**/*'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.yml'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.yaml'
 
 documentation:
-  - docs/**/*
-  - '*.md'
-  - README.md
+  - changed-files:
+    - any-glob-to-any-file: 'docs/**/*'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.md'
+  - changed-files:
+    - any-glob-to-any-file: 'README.md'
 
 ci-cd:
-  - .github/workflows/**/*
-  - .pre-commit-config.yaml
+  - changed-files:
+    - any-glob-to-any-file: '.github/workflows/**/*'
+  - changed-files:
+    - any-glob-to-any-file: '.pre-commit-config.yaml'
 
 scripts:
-  - scripts/**/*
-  - '*.sh'
+  - changed-files:
+    - any-glob-to-any-file: 'scripts/**/*'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.sh'
 
 security:
-  - .secrets.baseline
-  - .tflint.hcl
-  - .yamllint
+  - changed-files:
+    - any-glob-to-any-file: '.secrets.baseline'
+  - changed-files:
+    - any-glob-to-any-file: '.tflint.hcl'
+  - changed-files:
+    - any-glob-to-any-file: '.yamllint'
 
 dependencies:
-  - '**/requirements.txt'
-  - '**/requirements.yml'
-  - package.json
-  - go.mod
-  - Gemfile
+  - changed-files:
+    - any-glob-to-any-file: '**/requirements.txt'
+  - changed-files:
+    - any-glob-to-any-file: '**/requirements.yml'
+  - changed-files:
+    - any-glob-to-any-file: 'package.json'
+  - changed-files:
+    - any-glob-to-any-file: 'go.mod'
+  - changed-files:
+    - any-glob-to-any-file: 'Gemfile'
