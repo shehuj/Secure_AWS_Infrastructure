@@ -73,12 +73,6 @@ variable "health_check_matcher" {
   default     = "200,301"
 }
 
-variable "deployment_timeout_minutes" {
-  description = "Timeout for CodeDeploy deployment in minutes"
-  type        = number
-  default     = 10
-}
-
 variable "termination_wait_time_minutes" {
   description = "Time to wait before terminating original task set"
   type        = number
