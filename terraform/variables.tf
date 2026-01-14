@@ -191,3 +191,46 @@ variable "prometheus_retention_days" {
   type        = number
   default     = 15
 }
+
+# User Analytics Variables (CloudWatch RUM + Custom Analytics)
+variable "enable_user_analytics" {
+  description = "Enable comprehensive user analytics and monitoring (CloudWatch RUM + custom tracking)"
+  type        = bool
+  default     = false
+}
+
+variable "rum_sample_rate" {
+  description = "Percentage of sessions to monitor with CloudWatch RUM (0.0 to 1.0)"
+  type        = number
+  default     = 1.0 # 100% sampling
+}
+
+variable "analytics_favorite_pages" {
+  description = "List of favorite pages to specifically track in analytics"
+  type        = list(string)
+  default     = ["/", "/about", "/contact"]
+}
+
+variable "analytics_excluded_pages" {
+  description = "List of pages to exclude from analytics tracking"
+  type        = list(string)
+  default     = ["/ghost/*", "/admin/*", "*/preview/*"]
+}
+
+variable "alb_log_retention_days" {
+  description = "Number of days to retain ALB access logs in S3"
+  type        = number
+  default     = 90
+}
+
+variable "low_traffic_threshold" {
+  description = "Minimum unique visitors per hour before triggering low traffic alarm"
+  type        = number
+  default     = 10
+}
+
+variable "high_error_threshold" {
+  description = "Maximum JavaScript errors per 5 minutes before triggering high error alarm"
+  type        = number
+  default     = 50
+}

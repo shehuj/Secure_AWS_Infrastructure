@@ -36,6 +36,32 @@ module "alb_asg" {
   tags = var.tags
 }
 
+# User Analytics Module (CloudWatch RUM + Custom Analytics)
+# Declared before ghost_blog so ALB can reference the S3 bucket
+module "user_analytics" {
+  count  = var.enable_user_analytics ? 1 : 0
+  source = "./modules/user_analytics"
+
+  environment  = var.environment
+  domain_name  = var.ghost_domain_name
+
+  # Sampling and tracking configuration
+  rum_sample_rate = var.rum_sample_rate
+  favorite_pages  = var.analytics_favorite_pages
+  excluded_pages  = var.analytics_excluded_pages
+
+  # Log retention
+  log_retention_days     = var.log_retention_days
+  alb_log_retention_days = var.alb_log_retention_days
+
+  # Alerting thresholds
+  low_traffic_threshold = var.low_traffic_threshold
+  high_error_threshold  = var.high_error_threshold
+  alarm_actions         = []  # Will be set after monitoring module is created
+
+  tags = var.tags
+}
+
 # Ghost Blog on ECS Fargate
 module "ghost_blog" {
   source = "./modules/ecs_ghost"
@@ -51,6 +77,10 @@ module "ghost_blog" {
   memory                     = 1024
   log_retention_days         = var.log_retention_days
   enable_deletion_protection = false
+
+  # Enable ALB access logging if user analytics is enabled
+  enable_alb_access_logs = var.enable_user_analytics
+  alb_logs_bucket        = var.enable_user_analytics ? module.user_analytics[0].alb_logs_bucket : ""
 
   tags = var.tags
 }

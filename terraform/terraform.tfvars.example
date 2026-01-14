@@ -60,6 +60,30 @@ grafana_certificate_arn   = "arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERT_ID" 
 # grafana_admin_password is required if enable_observability = true
 prometheus_retention_days = 15  # Days to retain Prometheus metrics
 
+# User Analytics Configuration (CloudWatch RUM + Custom Tracking) - OPTIONAL
+enable_user_analytics = false  # Set to true to enable comprehensive user analytics
+rum_sample_rate       = 1.0    # Sample rate for RUM (1.0 = 100%, 0.1 = 10%)
+
+# Pages to track (supports wildcards)
+analytics_favorite_pages = [
+  "/",
+  "/about",
+  "/contact",
+  "/blog/*"
+]
+
+# Pages to exclude from tracking (admin pages, etc.)
+analytics_excluded_pages = [
+  "/ghost/*",
+  "/admin/*",
+  "*/preview/*"
+]
+
+# Analytics log retention and alerting
+alb_log_retention_days = 90  # Days to retain ALB access logs
+low_traffic_threshold  = 10  # Alert if < 10 visitors/hour
+high_error_threshold   = 50  # Alert if > 50 JS errors/5min
+
 # Common Resource Tags
 tags = {
   Project     = "Secure AWS Infrastructure"

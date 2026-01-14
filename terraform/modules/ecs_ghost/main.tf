@@ -319,6 +319,15 @@ resource "aws_lb" "ghost" {
   enable_http2                     = true
   enable_cross_zone_load_balancing = true
 
+  # Enable access logging if bucket is provided
+  dynamic "access_logs" {
+    for_each = var.enable_alb_access_logs && var.alb_logs_bucket != "" ? [1] : []
+    content {
+      bucket  = var.alb_logs_bucket
+      enabled = true
+    }
+  }
+
   tags = merge(
     {
       Name        = "${var.environment}-ghost-alb"
