@@ -118,7 +118,7 @@ A comprehensive Infrastructure-as-Code (IaC) solution combining Terraform, Ansib
 - **AWS Account** with admin access
 - **GitHub Account** with repository
 - **Terraform** >= 1.7.0
-- **Ansible** >= 2.14
+- **Ansible** >= 8.0 (includes ansible-core 2.15+)
 - **AWS CLI** configured locally
 - **Domain name** with ACM certificate
 
