@@ -35,8 +35,12 @@ resource "aws_vpc" "main" {
   )
 
   lifecycle {
-    # Prevent accidental destruction of VPC
-    prevent_destroy = false # Set to true in production
+    # Prevent accidental destruction of VPC in production environments
+    # NOTE: Terraform does not support dynamic prevent_destroy values
+    # For production: manually change this to true before deploying
+    # For dev/test: keep as false for easier cleanup
+    prevent_destroy = false # TODO: Set to true for production deployments
+
     # Ignore changes to tags added by AWS or other tools
     ignore_changes = [
       tags["Created"],

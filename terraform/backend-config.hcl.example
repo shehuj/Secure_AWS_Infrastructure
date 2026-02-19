@@ -1,0 +1,9 @@
+# Terraform S3 Backend Configuration
+# Copy this file to backend-config.hcl and update with your values
+# Usage: terraform init -backend-config=backend-config.hcl
+
+bucket         = "YOUR-TERRAFORM-STATE-BUCKET"
+key            = "prodinfra/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "YOUR-TERRAFORM-LOCK-TABLE"
+encrypt        = true

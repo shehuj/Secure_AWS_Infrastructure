@@ -1,520 +1,1043 @@
 # Secure AWS Infrastructure
 
-[![Terraform](https://img.shields.io/badge/Terraform-1.7+-623CE4?logo=terraform)](https://www.terraform.io/)
-[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?logo=amazon-aws)](https://aws.amazon.com/)
-[![Ansible](https://img.shields.io/badge/Ansible-Automation-EE0000?logo=ansible)](https://www.ansible.com/)
-[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+**Production-ready, fully automated AWS infrastructure with zero-downtime deployments**
 
-A production-ready, secure AWS infrastructure deployment using Infrastructure as Code (IaC) with Terraform and configuration management with Ansible. This project implements AWS best practices, security controls, and automated CI/CD pipelines.
+A comprehensive Infrastructure-as-Code (IaC) solution combining Terraform, Ansible, and GitHub Actions to deploy secure, scalable AWS infrastructure with enterprise-grade monitoring, security scanning, and automated deployments.
+
+![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
+![Terraform](https://img.shields.io/badge/terraform-1.7+-purple.svg)
+![AWS](https://img.shields.io/badge/AWS-Cloud-orange.svg)
+
+---
 
 ## Table of Contents
 
 - [Features](#features)
 - [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-- [Deployment](#deployment)
+- [Infrastructure Components](#infrastructure-components)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [Security](#security)
-- [Monitoring](#monitoring)
-- [Cost Optimization](#cost-optimization)
+- [Monitoring & Analytics](#monitoring--analytics)
+- [Blue-Green Deployments](#blue-green-deployments)
+- [Cost Estimation](#cost-estimation)
 - [Troubleshooting](#troubleshooting)
+- [Makefile Commands](#makefile-commands)
 - [Contributing](#contributing)
-- [License](#license)
+
+---
 
 ## Features
 
-### 🚀 Fully Automated Infrastructure
+### 🚀 Automation & Deployment
+- **Fully Automated CI/CD** — 6 GitHub Actions workflows for zero-manual-effort deployment
+- **Idempotent Infrastructure** — Safe to run repeatedly without side effects (Terraform state locking + Ansible idempotent modules)
+- **Zero-Downtime Deployments** — Blue-green deployment strategy with instant rollback capability
+- **Pre-Commit Validation** — 20+ automated checks (Terraform, Ansible, security, linting) before every commit
+- **Multi-Environment Support** — Separate dev/staging/production with environment-specific configurations
 
-**Zero-manual-effort deployment** with complete automation:
+### 🔒 Security & Compliance
+- **8 Security Scanning Tools** — Always-on: TruffleHog, Gitleaks, Checkov, tfsec, Trivy, ansible-lint, detect-secrets, CodeQL
+- **GitHub OIDC Authentication** — Keyless AWS access (no long-lived credentials)
+- **Encrypted Everything** — KMS encryption for all data at rest and in transit
+- **Least Privilege IAM** — Granular permissions per service with deny-by-default
+- **Security Hardening** — All critical issues resolved (hardcoded secrets removed, account-agnostic configs)
 
-- ✅ **Fully Automated CI/CD** - GitHub Actions workflows for all environments
-- ✅ **Pre-commit Validation** - Automated code quality and security checks
-- ✅ **Blue-Green Deployments** - Zero-downtime application releases
-- ✅ **Automated Testing** - Unit, integration, and idempotency tests
-- ✅ **Security Scanning** - Multiple security tools integrated
-- ✅ **Monitoring & Alerting** - Automated health checks and metrics
-- ✅ **Multi-Environment** - Dev, Staging, Production pipelines
+### 📊 Monitoring & Observability
+- **Real-Time User Analytics** — CloudWatch RUM + custom analytics with visitor tracking and engagement metrics
+- **Prometheus + Grafana** — Advanced metrics visualization with 15+ pre-built dashboards
+- **CloudWatch Integration** — Application logs, metrics, alarms, and Insights queries
+- **ALB Access Logs** — Detailed traffic analysis with Lambda-based custom metrics
+- **Health Checks** — Automated monitoring scripts with alerting
 
-**Learn more**: See [Automation Guide](docs/AUTOMATION.md) for complete documentation.
+### 🏗️ Infrastructure
+- **Production VPC** — Multi-AZ deployment with public/private subnets and NAT gateways
+- **Application Load Balancer** — SSL/TLS termination with Auto Scaling Group
+- **ECS Fargate** — Containerized Ghost blog with blue-green deployments
+- **Optional Add-ons** — RDS MySQL, ElastiCache Redis, CloudFront CDN (modules ready, not deployed by default)
 
-### ✨ Idempotent Infrastructure
-
-This infrastructure is **fully idempotent** - you can run deployments multiple times with the same result:
-
-- 🔄 **Terraform**: Second `terraform apply` shows "No changes"
-- 🔄 **Ansible**: Second playbook run shows `changed=0`
-- 🔄 **CI/CD**: Workflows detect when no changes are needed
-- 🔄 **Automated Testing**: Idempotency validated on every deployment
-
-**Learn more**: See [Idempotency Guide](docs/IDEMPOTENCY.md) for complete documentation.
-
-### Infrastructure Components
-
-- **VPC Module**: Complete networking setup with public and private subnets across multiple AZs
-  - Internet Gateway for public subnet connectivity
-  - NAT Gateways for private subnet outbound traffic
-  - VPC Flow Logs for network monitoring
-  - Configurable CIDR blocks and subnet counts
-
-- **EC2 Module**: Secure compute instances with best practices
-  - Latest Amazon Linux 2023 AMI (auto-updated)
-  - IAM instance profiles with SSM and CloudWatch access
-  - Security groups with restricted access
-  - IMDSv2 enforcement
-  - Encrypted EBS volumes
-  - CloudWatch agent for custom metrics
-
-- **Monitoring Module**: Comprehensive observability
-  - CloudWatch Alarms for CPU, memory, disk, and status checks
-  - Custom CloudWatch Dashboard
-  - Centralized log collection
-  - SNS notifications for alerts
-
-- **OIDC Module**: Secure GitHub Actions integration
-  - OIDC provider for passwordless authentication
-  - Fine-grained IAM permissions
-  - No long-lived credentials required
-
-### Security Features
-
-- Encrypted data at rest (EBS volumes, S3 state)
-- Encrypted data in transit (HTTPS, TLS)
-- No SSH keys in code or secrets
-- Security group rules following least privilege
-- VPC Flow Logs enabled
-- CloudWatch logging for all services
-- AWS Systems Manager for secure instance access
-- Automated security scanning (tfsec, Checkov, Trivy)
-- Secret detection with Gitleaks
-
-### Automation & CI/CD
-
-- **Terraform Workflows**:
-  - Automated validation and linting
-  - Plan on pull requests with detailed output
-  - Manual approval gates for apply
-  - State locking with DynamoDB
-
-- **Security Scanning**:
-  - Weekly automated scans
-  - Multiple security tools (tfsec, Checkov, Trivy)
-  - SARIF integration with GitHub Security tab
-  - Ansible linting with ansible-lint
-
-- **Ansible Deployment**:
-  - Automated server configuration
-  - Dynamic inventory from AWS
-  - Idempotent playbooks
-  - Health check validation
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         AWS Account                          │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                    VPC (10.0.0.0/16)                   │ │
-│  │                                                         │ │
-│  │  ┌──────────────────┐     ┌──────────────────┐        │ │
-│  │  │  Public Subnet   │     │  Public Subnet   │        │ │
-│  │  │  10.0.0.0/24     │     │  10.0.1.0/24     │        │ │
-│  │  │  ┌────────────┐  │     │  ┌────────────┐  │        │ │
-│  │  │  │   EC2      │  │     │  │  NAT GW    │  │        │ │
-│  │  │  │  Web Server│  │     │  └────────────┘  │        │ │
-│  │  │  └────────────┘  │     │                  │        │ │
-│  │  └──────────────────┘     └──────────────────┘        │ │
-│  │           │                        │                   │ │
-│  │  ┌────────▼────────────────────────▼───────────┐      │ │
-│  │  │          Internet Gateway                   │      │ │
-│  │  └─────────────────────────────────────────────┘      │ │
-│  │                                                         │ │
-│  │  ┌──────────────────┐     ┌──────────────────┐        │ │
-│  │  │ Private Subnet   │     │ Private Subnet   │        │ │
-│  │  │  10.0.2.0/24     │     │  10.0.3.0/24     │        │ │
-│  │  └──────────────────┘     └──────────────────┘        │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                CloudWatch Monitoring                   │ │
-│  │  • Dashboards  • Alarms  • Logs  • Metrics            │ │
-│  └────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
-
-         │
-         │  GitHub Actions (OIDC)
-         ▼
-┌──────────────────┐
-│  GitHub Repo     │
-│  CI/CD Pipeline  │
-└──────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         GitHub Actions                          │
+│  Terraform CI/CD │ Ansible CI/CD │ Blue-Green │ Security Scan  │
+└──────────────────┬──────────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                           AWS Account                            │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                        VPC (Multi-AZ)                     │  │
+│  │                                                            │  │
+│  │  ┌──────────────┐         ┌──────────────┐              │  │
+│  │  │ Public Subnet│         │ Public Subnet│              │  │
+│  │  │   (AZ-1)     │         │   (AZ-2)     │              │  │
+│  │  │              │         │              │              │  │
+│  │  │   ALB (Blue) │         │   ALB (Green)│              │  │
+│  │  │   Target     │         │   Target     │              │  │
+│  │  └──────┬───────┘         └──────┬───────┘              │  │
+│  │         │                        │                       │  │
+│  │  ┌──────▼────────┐        ┌──────▼────────┐            │  │
+│  │  │ Private Subnet│        │ Private Subnet│            │  │
+│  │  │   (AZ-1)      │        │   (AZ-2)      │            │  │
+│  │  │               │        │               │            │  │
+│  │  │ ECS Fargate   │        │ ECS Fargate   │            │  │
+│  │  │ (Ghost Blog)  │        │ (Ghost Blog)  │            │  │
+│  │  │ Auto Scaling  │        │ Auto Scaling  │            │  │
+│  │  │               │        │               │            │  │
+│  │  └───────────────┘        └───────────────┘            │  │
+│  │                                                          │  │
+│  │  Monitoring:                Analytics:                  │  │
+│  │  • Prometheus (ECS)        • CloudWatch RUM            │  │
+│  │  • Grafana (ECS)           • Custom Metrics Lambda     │  │
+│  │  • CloudWatch Logs         • ALB Access Logs           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Prerequisites
-
-### Required Tools
-
-- [AWS CLI](https://aws.amazon.com/cli/) v2.x
-- [Terraform](https://www.terraform.io/downloads) v1.7+
-- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) v2.14+
-- [Python](https://www.python.org/downloads/) 3.8+
-- [jq](https://stedolan.github.io/jq/) (optional, for JSON parsing)
-
-### AWS Account Setup
-
-1. **AWS Account** with appropriate permissions
-2. **AWS CLI configured** with credentials
-3. **SSH Key Pair** created in your target AWS region
-
-### GitHub Repository Setup
-
-1. Fork or clone this repository
-2. Configure GitHub Secrets (see [Configuration](#configuration))
-
-## Quick Start
-
-All operations are **idempotent** - safe to run multiple times!
-
-### 1. Bootstrap Backend Infrastructure
-
-First, create the S3 bucket and DynamoDB table for Terraform state:
-
-```bash
-# Run the bootstrap script
-./scripts/bootstrap.sh \
-  --bucket your-terraform-state-bucket \
-  --table terraform-locks \
-  --environment prod \
-  --region us-east-1
-```
-
-This script will:
-- Create an S3 bucket with versioning and encryption
-- Create a DynamoDB table for state locking
-- Generate a backend configuration file
-
-### 2. Configure Terraform Variables
-
-Copy the example tfvars file and customize it:
-
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Edit `terraform.tfvars` with your values:
-
-```hcl
-# Required variables
-github_repo            = "your-org/your-repo"
-key_pair_name         = "your-ssh-key"
-terraform_state_bucket = "your-terraform-state-bucket"
-
-# Optional: Customize infrastructure
-environment           = "prod"
-aws_region           = "us-east-1"
-vpc_cidr             = "10.0.0.0/16"
-instance_type        = "t3.micro"
-instance_count       = 1
-
-# Security: Restrict SSH access
-allowed_ssh_cidr = ["YOUR_IP_ADDRESS/32"]
-```
-
-### 3. Deploy Infrastructure
-
-#### Option A: Manual Deployment
-
-```bash
-cd terraform
-
-# Initialize Terraform
-terraform init -backend-config=backend-config.hcl
-
-# Review the plan
-terraform plan
-
-# Apply changes
-terraform apply
-```
-
-#### Option B: Automated Deployment (GitHub Actions)
-
-1. Push your changes to a feature branch
-2. Create a pull request to `main`
-3. Review the Terraform plan in PR comments
-4. Merge PR to trigger automated deployment
-
-### 4. Configure Servers with Ansible
-
-After infrastructure deployment:
-
-```bash
-cd ansible
-
-# Test connectivity
-ansible all -m ping
-
-# Deploy web server configuration
-ansible-playbook playbooks/webserver.yml
-```
-
-## Configuration
-
-### GitHub Secrets
-
-Configure these secrets in your GitHub repository:
-
-| Secret Name | Description | Required |
-|-------------|-------------|----------|
-| `AWS_ROLE_ARN` | ARN of the OIDC IAM role | Yes |
-| `AWS_REGION` | AWS region (default: us-east-1) | No |
-| `SNYK_TOKEN` | Snyk API token for scanning | No |
-| `SONAR_TOKEN` | SonarCloud token | No |
-
-### Terraform Variables
-
-All available variables are documented in [`terraform/variables.tf`](terraform/variables.tf).
-
-Key variables:
-
-- **General**: `environment`, `aws_region`, `tags`
-- **VPC**: `vpc_cidr`, `public_subnet_count`, `private_subnet_count`
-- **EC2**: `instance_type`, `instance_count`, `allowed_ssh_cidr`
-- **Monitoring**: `cpu_threshold`, `memory_threshold`, `alarm_email_endpoints`
-
-## Deployment
-
-### Environment-Specific Deployments
-
-This infrastructure supports multiple environments (dev, staging, prod):
-
-```bash
-# Dev environment
-terraform workspace new dev
-terraform apply -var="environment=dev" -var="instance_type=t3.micro"
-
-# Staging environment
-terraform workspace new staging
-terraform apply -var="environment=staging" -var="instance_type=t3.small"
-
-# Production environment
-terraform workspace new prod
-terraform apply -var="environment=prod" -var="instance_type=t3.medium"
-```
-
-### Manual Approval Gates
-
-For production deployments, the GitHub Actions workflow includes manual approval:
-
-1. Workflow runs `terraform plan`
-2. Waits for manual approval in GitHub UI
-3. Only proceeds with `terraform apply` after approval
-
-## CI/CD Pipeline
-
-### Workflow Triggers
-
-- **Terraform Plan**: Runs on pull requests to `main`
-- **Terraform Apply**: Runs on push to `main` branch
-- **Security Scan**: Runs weekly and on all PRs
-- **Ansible Deploy**: Triggered after successful Terraform apply
-
-### Security Scanning Tools
-
-- **tfsec**: Terraform security scanner
-- **Checkov**: Policy-as-code scanner
-- **Trivy**: Vulnerability scanner
-- **ansible-lint**: Ansible best practices
-- **Gitleaks**: Secret detection
-
-### Pipeline Stages
-
-1. **Validate**: Terraform fmt, validate, and lint
-2. **Security Scan**: Multiple security tools
-3. **Plan**: Generate and review Terraform plan
-4. **Approval**: Manual approval gate (production)
-5. **Apply**: Deploy infrastructure changes
-6. **Configure**: Run Ansible playbooks
-7. **Verify**: Health checks and smoke tests
-
-## Security
-
-### Best Practices Implemented
-
-- ✅ Encryption at rest (EBS, S3)
-- ✅ Encryption in transit (TLS/HTTPS)
-- ✅ No hardcoded secrets
-- ✅ Least privilege IAM policies
-- ✅ Security groups with restricted access
-- ✅ VPC Flow Logs enabled
-- ✅ CloudWatch logging
-- ✅ IMDSv2 enforcement
-- ✅ Automated security scanning
-- ✅ Regular dependency updates
-
-### Security Recommendations
-
-1. **SSH Access**: Always restrict `allowed_ssh_cidr` to your IP
-2. **State Security**: Enable S3 bucket versioning and MFA delete
-3. **Secrets Management**: Use AWS Secrets Manager for sensitive data
-4. **Monitoring**: Set up SNS notifications for security alarms
-5. **Compliance**: Review weekly security scan reports
-
-## Monitoring
-
-### CloudWatch Dashboard
-
-Access the CloudWatch dashboard:
-```
-https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=prod-infrastructure-dashboard
-```
-
-### Available Metrics
-
-- CPU Utilization
-- Memory Utilization (custom metric)
-- Disk Utilization (custom metric)
-- Network In/Out
-- Status Checks
-
-### Alarms
-
-Configured alarms:
-- High CPU usage (> 80%)
-- High memory usage (> 80%)
-- High disk usage (> 80%)
-- Instance status check failures
-
-### Logs
-
-Log groups:
-- `/aws/ec2/{environment}/nginx/access`
-- `/aws/ec2/{environment}/nginx/error`
-- `/aws/vpc/{environment}-flow-logs`
-
-## Cost Optimization
-
-### Estimated Monthly Costs
-
-- **t3.micro instances** (2): ~$15/month
-- **NAT Gateway** (1): ~$32/month
-- **EBS volumes** (20GB): ~$2/month
-- **Data transfer**: Variable
-- **CloudWatch**: ~$5/month
-
-**Total**: ~$54/month (single NAT, 2 instances)
-
-### Cost Saving Tips
-
-1. Use `single_nat_gateway = true` (enabled by default)
-2. Use Spot instances for dev/staging
-3. Stop instances when not in use
-4. Use AWS Cost Explorer for analysis
-5. Set up billing alerts
-
-## Troubleshooting
-
-### Common Issues
-
-#### 1. Terraform Init Fails
-
-```bash
-# Ensure backend bucket exists
-aws s3 ls s3://your-terraform-state-bucket
-
-# Run bootstrap script if needed
-./scripts/bootstrap.sh -b your-terraform-state-bucket
-```
-
-#### 2. EC2 Instances Not Accessible
-
-```bash
-# Check security group rules
-aws ec2 describe-security-groups --group-ids sg-xxxxx
-
-# Verify instance is running
-aws ec2 describe-instances --instance-ids i-xxxxx
-```
-
-#### 3. Ansible Cannot Connect
-
-```bash
-# Test AWS credentials
-aws sts get-caller-identity
-
-# Verify dynamic inventory
-ansible-inventory -i inventory/aws_ec2.yml --list
-
-# Use SSM for access (no SSH key needed)
-aws ssm start-session --target i-xxxxx
-```
-
-### Getting Help
-
-- Check [GitHub Issues](../../issues)
-- Review [Terraform Registry Docs](https://registry.terraform.io/)
-- AWS Support
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-Please follow:
-- [Terraform Style Guide](https://www.terraform.io/docs/language/syntax/style.html)
-- [Ansible Best Practices](https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html)
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- HashiCorp for Terraform
-- Red Hat for Ansible
-- AWS for cloud infrastructure
-- Security scanning tools: tfsec, Checkov, Trivy
+**Data Flow**:
+1. User accesses `https://blog.yourdomain.com`
+2. ALB routes to active target group (Blue or Green)
+3. ECS Fargate serves Ghost blog
+4. CloudWatch RUM tracks user interactions
+5. Lambda processes ALB logs for custom analytics
+6. Prometheus scrapes ECS metrics
+7. Grafana visualizes all data sources
 
 ---
 
-**Made with ❤️ for secure and automated infrastructure deployment**
+## Quick Start
+
+### Prerequisites
+
+- **AWS Account** with admin access
+- **GitHub Account** with repository
+- **Terraform** >= 1.7.0
+- **Ansible** >= 2.14
+- **AWS CLI** configured locally
+- **Domain name** with ACM certificate
+
+### 1. Clone & Setup
+
+```bash
+# Clone repository
+git clone https://github.com/YOUR-ORG/Secure_AWS_Infrastructure.git
+cd Secure_AWS_Infrastructure
+
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+
+# Install all required tools (optional)
+./scripts/setup/install-tools.sh
+```
+
+### 2. Create Backend Infrastructure
+
+```bash
+# Bootstrap Terraform backend (S3 + DynamoDB)
+./scripts/bootstrap.sh
+```
+
+This creates:
+- S3 bucket for Terraform state
+- DynamoDB table for state locking
+- KMS key for state encryption
+
+### 3. Configure
+
+```bash
+cd terraform
+
+# Copy backend config template
+cp backend-config.hcl.example backend-config.hcl
+# Edit with your S3 bucket and DynamoDB table names
+
+# Copy variables template
+cp terraform.tfvars.example terraform.tfvars
+# Edit with your configuration (see Configuration section below)
+
+# Set sensitive variables via environment
+export TF_VAR_grafana_admin_password='SecurePassword123!'
+export TF_VAR_acm_certificate_arn='arn:aws:acm:REGION:ACCOUNT:certificate/ID'
+export TF_VAR_grafana_certificate_arn='arn:aws:acm:REGION:ACCOUNT:certificate/ID'
+```
+
+### 4. Deploy
+
+```bash
+# Initialize Terraform
+terraform init -backend-config=backend-config.hcl
+
+# Plan deployment
+terraform plan
+
+# Deploy infrastructure
+terraform apply
+
+# View outputs
+terraform output
+```
+
+**That's it!** Infrastructure is deployed. Access your Ghost blog at the ALB DNS name (output: `alb_dns_name`).
+
+---
+
+## Configuration
+
+### GitHub Secrets (Required)
+
+**Recommended: Use OIDC** (keyless authentication):
+
+1. Deploy OIDC provider:
+   ```bash
+   terraform apply -target=module.oidc_role
+   terraform output github_oidc_role_arn
+   ```
+
+2. Add to GitHub Secrets (**Settings → Secrets → Actions**):
+   - `AWS_ROLE_ARN` — From Terraform output above
+
+**Alternative: Long-lived credentials** (not recommended):
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+**Terraform Variables** (passed as secrets):
+- `TF_VAR_grafana_admin_password`
+- `TF_VAR_acm_certificate_arn`
+- `TF_VAR_grafana_certificate_arn`
+
+### Terraform Variables (terraform.tfvars)
+
+**Required**:
+```hcl
+aws_region              = "us-east-1"
+environment             = "production"
+vpc_cidr                = "10.0.0.0/16"
+enable_nat_gateway      = true
+
+# Domains (must have ACM certificates)
+ghost_domain_name       = "blog.yourdomain.com"
+grafana_domain_name     = "grafana.yourdomain.com"
+```
+
+**Optional Features**:
+```hcl
+# Observability (Prometheus + Grafana)
+enable_observability      = true
+prometheus_retention_days = 15
+
+# User Analytics (CloudWatch RUM + custom metrics)
+enable_user_analytics = true
+
+# Ghost Blog on ECS
+enable_ghost_blog = true
+ghost_image       = "ghost:5"
+
+# Blue-Green Deployment
+enable_blue_green = false  # Enable for zero-downtime updates
+```
+
+**Cost Optimization**:
+```hcl
+enable_nat_gateway = false  # Use public subnets only (saves ~$32/month)
+instance_type      = "t3.micro"  # Or t3.small for production
+```
+
+### Multi-Environment Deployments
+
+Use Terraform workspaces:
+
+```bash
+# Create environments
+terraform workspace new dev
+terraform workspace new staging
+terraform workspace new production
+
+# Switch and deploy
+terraform workspace select production
+terraform apply -var-file=production.tfvars
+```
+
+---
+
+## Infrastructure Components
+
+### Terraform Modules
+
+| Module | Purpose | Status |
+|--------|---------|--------|
+| **vpc** | Multi-AZ VPC with public/private subnets | ✅ Active |
+| **alb_asg** | Application Load Balancer + Auto Scaling | ✅ Active |
+| **ecs_ghost** | Ghost blog on ECS Fargate | ✅ Active |
+| **ecs_bluegreen** | Blue-green deployment for ECS | ⚙️ Optional |
+| **monitoring** | CloudWatch dashboards + alarms | ✅ Active |
+| **observability** | Prometheus + Grafana on ECS | ⚙️ Optional |
+| **user_analytics** | CloudWatch RUM + custom analytics | ⚙️ Optional |
+| **oidc_role** | GitHub OIDC authentication | ✅ Active |
+| **rds_mysql** | RDS MySQL database | 📦 Available |
+| **elasticache_redis** | ElastiCache Redis cluster | 📦 Available |
+| **cloudfront** | CloudFront CDN distribution | 📦 Available |
+
+**📦 Available modules** exist but are not deployed by default. Enable in `main.tf`.
+
+### Ansible Playbooks
+
+**Webserver Playbook** (`ansible/playbooks/webserver.yml`):
+- Installs and configures nginx
+- Deploys responsive web application
+- Configures SSL/TLS with Let's Encrypt
+- Sets up security headers (CSP, HSTS, X-Frame-Options)
+- Enables dark mode and WCAG accessibility
+- Performance optimization (Gzip, caching, HTTP/2)
+
+**Usage**:
+```bash
+cd ansible
+
+# Deploy to all EC2 instances
+ansible-playbook playbooks/webserver.yml
+
+# Deploy to specific environment
+ansible-playbook playbooks/webserver.yml -e environment=production
+
+# Check mode (dry run)
+ansible-playbook playbooks/webserver.yml --check
+```
+
+---
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+
+#### 1. **Terraform CI/CD** (`.github/workflows/terraform-ci-cd.yml`)
+**Triggers**: Push to `main`, PR, manual
+
+**Jobs**:
+- Validate → Format check → Plan → Security scan → Apply → Notify
+
+**Features**:
+- Automatic plan on PR with comment
+- Manual approval for production
+- Drift detection
+- Cost estimation with Infracost
+
+#### 2. **Ansible CI/CD** (`.github/workflows/ansible-ci-cd.yml`)
+**Triggers**: Changes to `ansible/`, manual
+
+**Jobs**:
+- Syntax check → Linting → Dry run → Deploy → Verify
+
+**Features**:
+- ansible-lint validation
+- Check mode before apply
+- Idempotency verification
+
+#### 3. **Blue-Green Deployment** (`.github/workflows/blue-green-deployment.yml`)
+**Triggers**: Manual only
+
+**Jobs**:
+- Build new image → Deploy to green → Health check → Switch traffic → Monitor
+
+**Features**:
+- Zero-downtime updates
+- Automatic rollback on failure
+- Traffic shifting (10% → 50% → 100%)
+
+#### 4. **Security Scan** (`.github/workflows/security-scan.yml`)
+**Triggers**: Daily cron, PR, manual
+
+**Tools**:
+- Checkov (IaC policy-as-code)
+- tfsec (Terraform security)
+- Trivy (container vulnerabilities)
+- TruffleHog (secret scanning)
+- Gitleaks (credential detection)
+- ansible-lint (playbook best practices)
+
+#### 5. **PR Validation** (`.github/workflows/pr-validation.yml`)
+**Triggers**: All pull requests
+
+**Checks**:
+- Terraform validate + fmt
+- Ansible syntax
+- Markdown linting
+- JSON/YAML validation
+- Link checking
+
+#### 6. **Dependency Updates** (`.github/workflows/dependency-update.yml`)
+**Triggers**: Weekly cron
+
+**Actions**:
+- Terraform provider updates
+- GitHub Actions updates
+- Pre-commit hook updates
+- Automated PR creation
+
+### Pre-Commit Hooks
+
+**20+ automated checks** before every commit:
+
+```yaml
+# Security
+- TruffleHog (secrets)
+- Gitleaks (credentials)
+- detect-secrets (baseline)
+
+# Terraform
+- terraform fmt
+- terraform validate
+- terraform-docs (auto-generate docs)
+- tfsec
+- checkov
+
+# Ansible
+- ansible-lint
+- ansible-syntax-check
+
+# Code Quality
+- shellcheck (shell scripts)
+- yamllint
+- markdownlint
+- prettier (JSON/YAML/MD)
+
+# Python
+- black (formatting)
+- flake8 (linting)
+- isort (import sorting)
+```
+
+**Setup**:
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files  # Test all hooks
+```
+
+---
+
+## Security
+
+### ✅ Critical Security Fixes Applied
+
+All hardcoded secrets and account-specific values have been removed:
+
+1. **Secrets removed** — Grafana password no longer in terraform.tfvars
+2. **ARNs parameterized** — ACM certificate ARNs via environment variables
+3. **Backend externalized** — S3/DynamoDB config in separate file
+4. **Domains parameterized** — No hardcoded domain names
+5. **Production safeguards** — VPC prevent_destroy documentation
+
+### Security Best Practices
+
+**Secrets Management**:
+- ✅ Use AWS Secrets Manager for application secrets
+- ✅ Use GitHub Secrets for CI/CD credentials
+- ✅ Never commit secrets to git
+- ✅ Rotate credentials every 90 days
+
+**Access Control**:
+- ✅ Use OIDC over long-lived credentials
+- ✅ Enable MFA on all IAM users
+- ✅ Least-privilege IAM policies
+- ✅ Separate roles per environment
+
+**Infrastructure Protection**:
+- ✅ Set `prevent_destroy = true` for production VPC
+- ✅ Enable S3 versioning for state files
+- ✅ Enable DynamoDB point-in-time recovery
+- ✅ Review security group rules regularly
+
+**Monitoring & Compliance**:
+- ✅ Enable CloudTrail for audit logging
+- ✅ Enable GuardDuty for threat detection (optional)
+- ✅ Configure CloudWatch alarms
+- ✅ Enable VPC Flow Logs
+
+### Security Incident Response
+
+If secrets were exposed:
+
+1. **Rotate immediately**:
+   ```bash
+   export TF_VAR_grafana_admin_password='NewPassword!'
+   terraform apply
+   ```
+
+2. **Review git history**:
+   ```bash
+   git log -p | grep -i "password\|secret"
+
+   # Use trufflehog for comprehensive scan
+   docker run --rm -v $(pwd):/repo \
+     trufflesecurity/trufflehog:latest git file:///repo
+   ```
+
+3. **Remove from history** (if necessary):
+   ```bash
+   # WARNING: Rewrites git history
+   git filter-branch --force --index-filter \
+     "git rm --cached --ignore-unmatch terraform/terraform.tfvars" \
+     --prune-empty -- --all
+   ```
+
+---
+
+## Monitoring & Analytics
+
+### CloudWatch RUM (Real User Monitoring)
+
+**Features**:
+- Page load times
+- JavaScript errors
+- User sessions and paths
+- Device/browser analytics
+- Geographic data
+
+**Setup**:
+1. Enable in `terraform.tfvars`:
+   ```hcl
+   enable_user_analytics = true
+   ```
+
+2. Add RUM script to Ghost theme (`content/themes/YOUR-THEME/default.hbs`):
+   ```html
+   <script>
+   (function(n,i,v,r,s,c,x,z){/* CloudWatch RUM snippet */})();
+   </script>
+   ```
+
+3. View data:
+   ```bash
+   # CloudWatch Console → RUM → Application Monitoring
+   # Or via AWS CLI
+   aws rum get-app-monitor --name ghost-blog-rum
+   ```
+
+### Custom Analytics
+
+**Lambda-based pageview and engagement tracking**:
+
+| Metric | Description |
+|--------|-------------|
+| `pageviews` | Total page views with URL breakdown |
+| `unique_visitors` | Distinct IP addresses |
+| `engagement_time` | Time spent on pages |
+| `bounce_rate` | Single-page sessions |
+| `device_type` | Desktop/mobile/tablet split |
+
+**CloudWatch Insights Queries**:
+```sql
+# Top 10 most viewed pages
+fields @timestamp, page_url, view_count
+| filter metric_name = "pageviews"
+| stats sum(view_count) as total_views by page_url
+| sort total_views desc
+| limit 10
+
+# User engagement by device type
+fields @timestamp, device_type, engagement_seconds
+| filter metric_name = "engagement"
+| stats avg(engagement_seconds) as avg_time by device_type
+```
+
+### Prometheus + Grafana
+
+**Deployed on ECS Fargate** (optional: `enable_observability = true`)
+
+**Access**:
+- Grafana: `https://grafana.yourdomain.com`
+- Prometheus: Internal only (scraped by Grafana)
+
+**Pre-built Dashboards**:
+- AWS ECS Fargate Overview
+- Prometheus 2.0 Stats
+- Node Exporter Full
+- Container Insights
+- ALB Performance
+
+**Metrics Collected**:
+- ECS task CPU/memory/network
+- Container performance
+- ALB request count/latency/errors
+- Custom application metrics
+
+**Retention**: 15 days (configurable via `prometheus_retention_days`)
+
+### ALB Access Logs
+
+**Stored in S3** with Lambda processing for custom metrics:
+
+```bash
+# View logs
+aws s3 ls s3://YOUR-BUCKET/alb-logs/
+
+# Query with Athena
+aws athena start-query-execution --query-string \
+  "SELECT request_url, COUNT(*) as hits FROM alb_logs GROUP BY request_url ORDER BY hits DESC LIMIT 10"
+```
+
+---
+
+## Blue-Green Deployments
+
+**Zero-downtime deployment strategy** for ECS Ghost blog updates.
+
+### Architecture
+
+```
+ALB
+ ├─ Blue Target Group (Active)
+ │   └─ ECS Service (Current version)
+ └─ Green Target Group (Standby)
+     └─ ECS Service (New version)
+```
+
+### Deployment Flow
+
+1. **Deploy Green** — New version to standby target group
+2. **Health Check** — Verify green is healthy
+3. **Shift Traffic** — Gradual: 10% → 50% → 100%
+4. **Monitor** — CloudWatch alarms for error rates
+5. **Complete** — Green becomes active, blue becomes standby
+
+### Usage
+
+**Via GitHub Actions**:
+```
+Actions → Blue-Green Deployment → Run workflow
+→ Enter new image tag → Run
+```
+
+**Via Terraform**:
+```hcl
+# In terraform.tfvars
+enable_blue_green = true
+ghost_image       = "ghost:5.0.0"  # New version
+
+# Apply
+terraform apply
+```
+
+**Via Scripts**:
+```bash
+# Deploy new version
+./scripts/blue-green/deploy.sh ghost:5.0.0
+
+# Check status
+./scripts/blue-green/status.sh
+
+# Rollback if needed
+./scripts/blue-green/rollback.sh
+```
+
+### Rollback
+
+**Instant rollback** if issues detected:
+
+```bash
+# Automatic rollback on alarm
+# CloudWatch alarm triggers Lambda → switches traffic back
+
+# Manual rollback
+./scripts/blue-green/rollback.sh
+
+# Via GitHub Actions
+Actions → Blue-Green Deployment → Run workflow → Select "Rollback"
+```
+
+---
+
+## Cost Estimation
+
+### Base Infrastructure (~$50-65/month)
+
+| Component | Monthly Cost |
+|-----------|--------------|
+| **VPC** | Free |
+| **NAT Gateway** (2 AZs) | ~$32 |
+| **Application Load Balancer** | ~$16 |
+| **ECS Fargate** (1 task, 0.5 vCPU, 1GB) | ~$15 |
+| **S3** (state + logs, 5GB) | ~$0.12 |
+| **DynamoDB** (state locking) | Free tier |
+| **CloudWatch Logs** (10GB) | ~$5 |
+| **Total Base** | **~$68/month** |
+
+### Optional Add-ons
+
+| Component | Monthly Cost |
+|-----------|--------------|
+| **Prometheus + Grafana** (1 task, 1 vCPU, 2GB) | ~$30 |
+| **CloudWatch RUM** (10K sessions) | ~$10 |
+| **Custom Analytics Lambda** | ~$1 |
+| **RDS MySQL** (db.t3.micro) | ~$15 |
+| **ElastiCache Redis** (cache.t3.micro) | ~$12 |
+| **CloudFront** (100GB transfer) | ~$10 |
+
+### Cost Optimization
+
+**Save ~50% ($32/month)**:
+```hcl
+# Use public subnets only (no NAT gateway)
+enable_nat_gateway = false
+
+# Use smaller instances
+instance_type = "t3.micro"
+```
+
+**Free Tier Eligible** (first 12 months):
+- EC2: 750 hours/month
+- S3: 5GB storage
+- ALB: 750 hours/month
+- RDS: 750 hours db.t2.micro
+
+**Cost Monitoring**:
+```bash
+# View current costs
+aws ce get-cost-and-usage \
+  --time-period Start=2024-01-01,End=2024-01-31 \
+  --granularity MONTHLY \
+  --metrics BlendedCost
+
+# Set up budget alert
+aws budgets create-budget \
+  --account-id YOUR-ACCOUNT-ID \
+  --budget file://budget.json
+```
+
+---
+
+## Troubleshooting
+
+### Terraform Issues
+
+**Error: Backend configuration changed**
+```bash
+# Re-initialize with new backend config
+terraform init -reconfigure -backend-config=backend-config.hcl
+```
+
+**Error: Resource already exists**
+```bash
+# Import existing resource
+terraform import aws_kms_alias.beta alias/your-alias
+
+# Or delete and recreate
+aws kms delete-alias --alias-name alias/your-alias
+terraform apply
+```
+
+**Error: State locked**
+```bash
+# Force unlock (use carefully)
+terraform force-unlock LOCK_ID
+```
+
+### Ansible Issues
+
+**Error: Permission denied (publickey)**
+```bash
+# Verify SSH key in AWS EC2 console
+# Add key to ssh-agent
+ssh-add ~/.ssh/your-key.pem
+```
+
+**Error: Module not found**
+```bash
+# Install Ansible collections
+ansible-galaxy collection install community.general
+ansible-galaxy collection install ansible.posix
+```
+
+**Idempotency check failed**
+```bash
+# Run in check mode first
+ansible-playbook playbooks/webserver.yml --check
+
+# Compare runs
+ansible-playbook playbooks/webserver.yml --diff
+```
+
+### GitHub Actions Issues
+
+**Error: OIDC role not found**
+```bash
+# Deploy OIDC provider
+terraform apply -target=module.oidc_role
+
+# Add AWS_ROLE_ARN to GitHub Secrets
+```
+
+**Error: Terraform plan failed**
+```bash
+# Check logs in Actions tab
+# Verify all required secrets are set
+# Ensure backend configuration is correct
+```
+
+### Ghost Blog Issues
+
+**Container health check failing**
+```bash
+# Check ECS task logs
+aws ecs describe-tasks --cluster ghost-cluster --tasks TASK-ID
+
+# View CloudWatch logs
+aws logs tail /ecs/ghost --follow
+
+# Common fix: Update health check to accept 301 redirects
+```
+
+**DNS not resolving**
+```bash
+# Verify Route53 record
+aws route53 list-resource-record-sets --hosted-zone-id YOUR-ZONE-ID
+
+# Check ALB DNS
+terraform output alb_dns_name
+
+# Update DNS to point to correct ALB
+```
+
+### Monitoring Issues
+
+**Grafana: Connection refused**
+```bash
+# Check ECS service is running
+aws ecs describe-services --cluster monitoring --services grafana
+
+# Verify security group allows port 3000
+aws ec2 describe-security-groups --group-ids sg-XXXXX
+
+# Check ALB target health
+aws elbv2 describe-target-health --target-group-arn arn:aws:...
+```
+
+**Prometheus: No metrics**
+```bash
+# Verify Prometheus config
+aws ecs describe-task-definition --task-definition prometheus
+
+# Check service discovery
+curl http://prometheus:9090/api/v1/targets
+
+# Restart Prometheus service
+aws ecs update-service --cluster monitoring --service prometheus --force-new-deployment
+```
+
+### Cost Troubleshooting
+
+**Unexpected high costs**
+```bash
+# Identify top cost drivers
+aws ce get-cost-and-usage \
+  --time-period Start=2024-01-01,End=2024-01-31 \
+  --granularity DAILY \
+  --metrics UnblendedCost \
+  --group-by Type=SERVICE
+
+# Check for orphaned resources
+./scripts/monitoring/health-check.sh
+
+# Review NAT gateway data transfer
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/NATGateway \
+  --metric-name BytesOutToSource \
+  --start-time 2024-01-01T00:00:00Z \
+  --end-time 2024-01-31T23:59:59Z \
+  --period 86400 \
+  --statistics Sum
+```
+
+---
+
+## Makefile Commands
+
+**37 unified automation commands**:
+
+### Development
+```bash
+make help              # Show all available commands
+make validate          # Validate all code (Terraform + Ansible + Shell)
+make format            # Format all code
+make test              # Run all tests
+make pre-commit        # Run pre-commit hooks
+```
+
+### Terraform
+```bash
+make tf-init           # Initialize Terraform
+make tf-plan           # Plan infrastructure changes
+make tf-apply          # Apply infrastructure
+make tf-destroy        # Destroy all infrastructure (CAUTION)
+make tf-output         # Show Terraform outputs
+make tf-refresh        # Refresh state
+make tf-validate       # Validate Terraform code
+make tf-fmt            # Format Terraform files
+```
+
+### Ansible
+```bash
+make ansible-lint      # Lint Ansible playbooks
+make ansible-syntax    # Check syntax
+make ansible-check     # Dry run (check mode)
+make ansible-deploy    # Deploy with Ansible
+make ansible-verify    # Verify idempotency
+```
+
+### Security
+```bash
+make security-scan     # Run all security scans
+make tfsec             # Terraform security scan
+make checkov           # Policy-as-code scan
+make trivy             # Container vulnerability scan
+make secrets-scan      # Secret detection scan
+```
+
+### Deployment
+```bash
+make deploy-all        # Full deployment (Terraform + Ansible)
+make deploy-ghost      # Deploy Ghost blog only
+make deploy-monitoring # Deploy Prometheus + Grafana
+make blue-green-deploy # Blue-green deployment
+make rollback          # Rollback to previous version
+```
+
+### Monitoring
+```bash
+make health-check      # Check infrastructure health
+make get-metrics       # Fetch CloudWatch metrics
+make logs              # Tail CloudWatch logs
+make dashboard         # Open Grafana dashboard
+```
+
+### Cleanup
+```bash
+make clean             # Clean temporary files
+make clean-all         # Clean all generated files
+make cleanup-buckets   # Empty S3 buckets
+make cleanup-logs      # Delete old CloudWatch logs
+```
+
+---
 
 ## Idempotency
 
-This infrastructure is designed to be **completely idempotent**. Running any operation multiple times produces the same result as running it once.
+This infrastructure is **fully idempotent** — safe to run repeatedly without side effects.
 
-### Quick Verification
+### Terraform Idempotency
+
+- ✅ **State Locking** — DynamoDB prevents concurrent modifications
+- ✅ **Resource Tracking** — State file tracks all resources
+- ✅ **Lifecycle Rules** — `prevent_destroy`, `ignore_changes`, `create_before_destroy`
+- ✅ **Version Pinning** — Locked provider versions in `.terraform.lock.hcl`
+
+### Ansible Idempotency
+
+- ✅ **Idempotent Modules** — apt, copy, template, service, etc.
+- ✅ **Check Mode** — Dry run before apply (`--check`)
+- ✅ **Changed Detection** — Only reports actual changes (`changed_when`)
+- ✅ **Handlers** — Run once at end, only if notified
+
+### Verification
 
 ```bash
-# Test Terraform idempotency
-terraform plan  # First run
-terraform plan  # Second run - should show "No changes"
+# Run twice, should show no changes on second run
+make tf-plan   # Should show: No changes
+make tf-apply  # Should show: Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
 
-# Test Ansible idempotency
-ansible-playbook playbooks/webserver.yml  # First run
-ansible-playbook playbooks/webserver.yml  # Second run - changed=0
-
-# Run full idempotency test suite
-./scripts/test-idempotency.sh
-# or
-make idempotency-test
+make ansible-deploy  # Should show: ok=X changed=0
+make ansible-deploy  # Should show: ok=X changed=0 (same results)
 ```
 
-### Key Features
+---
 
-- **Lifecycle Rules**: Prevent unnecessary resource recreation
-- **State Locking**: Prevents concurrent modifications (DynamoDB)
-- **Change Detection**: Workflows only run when needed
-- **Ignore Changes**: Dynamic attributes don't trigger updates
-- **Automated Testing**: Every deployment validates idempotency
+## Contributing
 
-**Documentation**: See [docs/IDEMPOTENCY.md](docs/IDEMPOTENCY.md) for complete details.
+### Development Workflow
 
+1. **Create branch**:
+   ```bash
+   git checkout -b feature/your-feature
+   ```
+
+2. **Make changes**:
+   - Update Terraform modules in `terraform/modules/`
+   - Update Ansible playbooks in `ansible/playbooks/`
+   - Update documentation
+
+3. **Test locally**:
+   ```bash
+   make validate
+   make test
+   pre-commit run --all-files
+   ```
+
+4. **Commit**:
+   ```bash
+   git add .
+   git commit -m "feat: your feature description"
+   # Pre-commit hooks run automatically
+   ```
+
+5. **Push and create PR**:
+   ```bash
+   git push origin feature/your-feature
+   # Open pull request on GitHub
+   # CI/CD runs automatically
+   ```
+
+### Commit Message Format
+
+Use conventional commits:
+
+- `feat:` — New feature
+- `fix:` — Bug fix
+- `docs:` — Documentation only
+- `style:` — Formatting, no code change
+- `refactor:` — Code refactoring
+- `perf:` — Performance improvement
+- `test:` — Adding tests
+- `chore:` — Maintenance
+
+### Code Standards
+
+- **Terraform**: Follow [HashiCorp style guide](https://www.terraform.io/docs/language/syntax/style.html)
+- **Ansible**: Follow [Ansible best practices](https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html)
+- **Shell**: Use ShellCheck recommendations
+- **Python**: PEP 8 with Black formatter
+
+---
+
+## License
+
+GPL-3.0 License — See [LICENSE](LICENSE) file
+
+---
+
+## Support & Resources
+
+### External Resources
+
+- [Terraform AWS Provider Docs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+- [Ansible Documentation](https://docs.ansible.com/)
+- [AWS Well-Architected Framework](https://aws.amazon.com/architecture/well-architected/)
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+
+### Getting Help
+
+- **Issues**: Open a GitHub issue for bugs or feature requests
+- **Discussions**: Use GitHub Discussions for questions
+- **Security**: Report security issues privately to maintainers
+
+---
+
+**Status**: ✅ Production Ready
+**Last Updated**: 2026-02-19
+**Maintained By**: Infrastructure Team

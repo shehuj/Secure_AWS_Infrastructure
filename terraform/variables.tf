@@ -143,15 +143,15 @@ variable "create_dashboard" {
 
 # ALB + ACM Variables
 variable "acm_certificate_arn" {
-  description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog)"
+  description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog). Must be provided via terraform.tfvars or TF_VAR_acm_certificate_arn environment variable."
   type        = string
-  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b" # Must be provided via terraform.tfvars or environment variable
+  default     = "" # No default - must be explicitly set for your AWS account
 }
 
 variable "ghost_domain_name" {
-  description = "Domain name for Ghost blog (e.g., blog.example.com)"
+  description = "Domain name for Ghost blog (e.g., blog.example.com). Must be provided via terraform.tfvars."
   type        = string
-  default     = "claudiq.com"
+  default     = "" # No default - must be explicitly set for your domain
 }
 
 variable "ghost_image" {
@@ -168,9 +168,9 @@ variable "enable_observability" {
 }
 
 variable "grafana_domain_name" {
-  description = "Domain name for Grafana (e.g., grafana.example.com)"
+  description = "Domain name for Grafana (e.g., grafana.example.com). Must be provided via terraform.tfvars."
   type        = string
-  default     = "grafana.claudiq.com"
+  default     = "" # No default - must be explicitly set for your domain
 }
 
 variable "grafana_certificate_arn" {

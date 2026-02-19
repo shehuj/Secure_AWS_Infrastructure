@@ -225,6 +225,12 @@ tfplan
 tfplan.json
 *.tfplan
 
+# Backend configuration (contains environment-specific values)
+backend-config.hcl
+backend-config.tfvars
+**/backend-config.hcl
+**/backend-config.tfvars
+
 # Ansible
 *.retry
 .ansible/
