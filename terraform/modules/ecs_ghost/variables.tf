@@ -71,3 +71,21 @@ variable "trusted_ip_ranges" {
   type        = list(string)
   default     = ["0.0.0.0/0"] # Replace with actual trusted IP ranges
 }
+
+variable "alb_logs_bucket" {
+  description = "S3 bucket name for ALB access logs (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_alb_access_logs" {
+  description = "Enable ALB access logging to S3"
+  type        = bool
+  default     = false
+}
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID (optional - if not provided, will lookup by domain name)"
+  type        = string
+  default     = ""
+}

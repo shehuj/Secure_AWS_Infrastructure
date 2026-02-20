@@ -10,18 +10,27 @@ terraform {
 }
 
 
-# GitHub OIDC Provider
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
-}
-
-# Create the OIDC provider if it doesn't exist
+# GitHub OIDC Provider - create if it doesn't exist
+# This resource creates the OIDC provider unconditionally
+# If it already exists in your AWS account, import it with:
+# terraform import module.oidc_role.aws_iam_openid_connect_provider.github[0] arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
 resource "aws_iam_openid_connect_provider" "github" {
-  count = length(data.aws_iam_openid_connect_provider.github.arn) == 0 ? 1 : 0
+  count = var.create_oidc_provider ? 1 : 0
 
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
+
+  tags = {
+    Name      = "GitHub-OIDC-Provider"
+    ManagedBy = "Terraform"
+  }
+}
+
+# Data source to get existing OIDC provider (if not creating)
+data "aws_iam_openid_connect_provider" "github" {
+  count = var.create_oidc_provider ? 0 : 1
+  url   = "https://token.actions.githubusercontent.com"
 }
 
 # IAM Role for GitHub Actions
@@ -44,8 +53,10 @@ data "aws_iam_policy_document" "github_actions_assume" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
     principals {
-      type        = "Federated"
-      identifiers = [try(data.aws_iam_openid_connect_provider.github.arn, aws_iam_openid_connect_provider.github[0].arn)]
+      type = "Federated"
+      identifiers = [
+        var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
+      ]
     }
 
     condition {

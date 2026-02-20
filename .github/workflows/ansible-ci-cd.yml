@@ -34,7 +34,7 @@ on:
           - all
 
 env:
-  ANSIBLE_VERSION: '2.15'
+  ANSIBLE_VERSION: '8.7.0'  # ansible 8.x includes ansible-core 2.15
   PYTHON_VERSION: '3.11'
 
 jobs:

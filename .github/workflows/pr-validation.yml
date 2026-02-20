@@ -210,23 +210,39 @@ jobs:
     steps:
       - name: Generate PR Summary
         uses: actions/github-script@v7
+        env:
+          PR_SIZE_RESULT: ${{ needs.pr-size.result }}
+          COMMITS_RESULT: ${{ needs.validate-commits.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform-validation.result }}
+          ANSIBLE_RESULT: ${{ needs.ansible-validation.result }}
+          DOCS_RESULT: ${{ needs.documentation-check.result }}
+          SECURITY_RESULT: ${{ needs.security-check.result }}
+          SCRIPTS_RESULT: ${{ needs.test-scripts.result }}
         with:
           script: |
+            const prSizeResult = process.env.PR_SIZE_RESULT;
+            const commitsResult = process.env.COMMITS_RESULT;
+            const terraformResult = process.env.TERRAFORM_RESULT;
+            const ansibleResult = process.env.ANSIBLE_RESULT;
+            const docsResult = process.env.DOCS_RESULT;
+            const securityResult = process.env.SECURITY_RESULT;
+            const scriptsResult = process.env.SCRIPTS_RESULT;
+
             const summary = `## Pull Request Validation Summary
 
             | Check | Status |
             |-------|--------|
-            | PR Size | ${{ needs.pr-size.result }} |
-            | Commits | ${{ needs.validate-commits.result }} |
-            | Terraform | ${{ needs.terraform-validation.result }} |
-            | Ansible | ${{ needs.ansible-validation.result }} |
-            | Documentation | ${{ needs.documentation-check.result }} |
-            | Security | ${{ needs.security-check.result }} |
-            | Scripts | ${{ needs.test-scripts.result }} |
+            | PR Size | ${prSizeResult} |
+            | Commits | ${commitsResult} |
+            | Terraform | ${terraformResult} |
+            | Ansible | ${ansibleResult} |
+            | Documentation | ${docsResult} |
+            | Security | ${securityResult} |
+            | Scripts | ${scriptsResult} |
 
-            ${needs.pr-size.result === 'failure' ||
-              needs.validate-commits.result === 'failure' ||
-              needs.security-check.result === 'failure'
+            ${prSizeResult === 'failure' ||
+              commitsResult === 'failure' ||
+              securityResult === 'failure'
               ? '⚠️ **Some checks require attention**'
               : '✅ **All checks passed**'}
             `;

@@ -319,6 +319,15 @@ resource "aws_lb" "ghost" {
   enable_http2                     = true
   enable_cross_zone_load_balancing = true
 
+  # Enable access logging if bucket is provided
+  dynamic "access_logs" {
+    for_each = var.enable_alb_access_logs && var.alb_logs_bucket != "" ? [1] : []
+    content {
+      bucket  = var.alb_logs_bucket
+      enabled = true
+    }
+  }
+
   tags = merge(
     {
       Name        = "${var.environment}-ghost-alb"
@@ -452,15 +461,26 @@ resource "aws_ecs_service" "ghost" {
 # Data source for current region
 data "aws_region" "current" {}
 
-# Data source for Route 53 hosted zone
+# Data source for Route 53 hosted zone (only if zone_id not provided)
+# Extract the root domain from ghost_domain (e.g., "blog.example.com" -> "example.com")
+locals {
+  # Split domain by dots and take last 2 parts for root domain
+  domain_parts = split(".", var.ghost_domain)
+  root_domain  = length(local.domain_parts) > 2 ? "${local.domain_parts[length(local.domain_parts) - 2]}.${local.domain_parts[length(local.domain_parts) - 1]}" : var.ghost_domain
+
+  # Use provided zone_id or lookup zone_id from data source
+  zone_id = var.route53_zone_id != "" ? var.route53_zone_id : data.aws_route53_zone.main[0].zone_id
+}
+
 data "aws_route53_zone" "main" {
-  name         = var.ghost_domain
+  count        = var.route53_zone_id == "" ? 1 : 0
+  name         = "${local.root_domain}."
   private_zone = false
 }
 
 # Route 53 A record for Ghost domain (apex)
 resource "aws_route53_record" "ghost" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = var.ghost_domain
   type    = "A"
 
@@ -473,7 +493,7 @@ resource "aws_route53_record" "ghost" {
 
 # Route 53 A record for www subdomain
 resource "aws_route53_record" "ghost_www" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = "www.${var.ghost_domain}"
   type    = "A"
 

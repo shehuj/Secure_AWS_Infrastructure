@@ -118,3 +118,35 @@ output "grafana_service_name" {
   description = "Name of the Grafana ECS service"
   value       = var.enable_observability ? module.observability[0].grafana_service_name : null
 }
+
+# User Analytics Outputs
+output "rum_app_monitor_id" {
+  description = "CloudWatch RUM Application Monitor ID"
+  value       = var.enable_user_analytics ? module.user_analytics[0].rum_app_monitor_id : null
+}
+
+output "rum_javascript_snippet" {
+  description = "JavaScript snippet to add to Ghost theme for RUM tracking"
+  value       = var.enable_user_analytics ? module.user_analytics[0].rum_javascript_snippet : null
+  sensitive   = false
+}
+
+output "analytics_api_endpoint" {
+  description = "API Gateway endpoint for custom analytics events"
+  value       = var.enable_user_analytics ? module.user_analytics[0].analytics_api_endpoint : null
+}
+
+output "analytics_dashboard_url" {
+  description = "CloudWatch Dashboard URL for user analytics"
+  value       = var.enable_user_analytics ? module.user_analytics[0].dashboard_url : null
+}
+
+output "analytics_log_groups" {
+  description = "CloudWatch Log Groups for analytics data"
+  value       = var.enable_user_analytics ? module.user_analytics[0].analytics_log_groups : null
+}
+
+output "alb_logs_bucket" {
+  description = "S3 bucket for ALB access logs"
+  value       = var.enable_user_analytics ? module.user_analytics[0].alb_logs_bucket : null
+}

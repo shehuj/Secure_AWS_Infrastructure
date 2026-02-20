@@ -27,13 +27,13 @@ variable "github_repo" {
 variable "terraform_state_bucket" {
   description = "S3 bucket name for Terraform state"
   type        = string
-  default     = ""
+  default     = "ec2-shutdown-lambda-bucket"
 }
 
 variable "terraform_lock_table" {
   description = "DynamoDB table name for Terraform state locking"
   type        = string
-  default     = "terraform-locks"
+  default     = "dyning_table"
 }
 
 # VPC Variables
@@ -143,15 +143,15 @@ variable "create_dashboard" {
 
 # ALB + ACM Variables
 variable "acm_certificate_arn" {
-  description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog)"
+  description = "ARN of ACM certificate for HTTPS listeners (used for main ALB and Ghost blog). Must be provided via terraform.tfvars or TF_VAR_acm_certificate_arn environment variable."
   type        = string
-  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b" # Must be provided via terraform.tfvars or environment variable
+  default     = "" # No default - must be explicitly set for your AWS account
 }
 
 variable "ghost_domain_name" {
-  description = "Domain name for Ghost blog (e.g., blog.example.com)"
+  description = "Domain name for Ghost blog (e.g., blog.example.com). Must be provided via terraform.tfvars."
   type        = string
-  default     = "claudiq.com"
+  default     = "" # No default - must be explicitly set for your domain
 }
 
 variable "ghost_image" {
@@ -168,9 +168,9 @@ variable "enable_observability" {
 }
 
 variable "grafana_domain_name" {
-  description = "Domain name for Grafana (e.g., grafana.example.com)"
+  description = "Domain name for Grafana (e.g., grafana.example.com). Must be provided via terraform.tfvars."
   type        = string
-  default     = "grafana.claudiq.com"
+  default     = "" # No default - must be explicitly set for your domain
 }
 
 variable "grafana_certificate_arn" {
@@ -190,4 +190,53 @@ variable "prometheus_retention_days" {
   description = "Prometheus data retention in days"
   type        = number
   default     = 15
+}
+
+# User Analytics Variables (CloudWatch RUM + Custom Analytics)
+variable "enable_user_analytics" {
+  description = "Enable comprehensive user analytics and monitoring (CloudWatch RUM + custom tracking)"
+  type        = bool
+  default     = false
+}
+
+variable "rum_sample_rate" {
+  description = "Percentage of sessions to monitor with CloudWatch RUM (0.0 to 1.0)"
+  type        = number
+  default     = 1.0 # 100% sampling
+}
+
+variable "analytics_favorite_pages" {
+  description = "List of favorite pages to specifically track in analytics"
+  type        = list(string)
+  default     = ["/", "/about", "/contact"]
+}
+
+variable "analytics_excluded_pages" {
+  description = "List of pages to exclude from analytics tracking"
+  type        = list(string)
+  default     = ["/ghost/*", "/admin/*", "*/preview/*"]
+}
+
+variable "alb_log_retention_days" {
+  description = "Number of days to retain ALB access logs in S3"
+  type        = number
+  default     = 90
+}
+
+variable "low_traffic_threshold" {
+  description = "Minimum unique visitors per hour before triggering low traffic alarm"
+  type        = number
+  default     = 10
+}
+
+variable "high_error_threshold" {
+  description = "Maximum JavaScript errors per 5 minutes before triggering high error alarm"
+  type        = number
+  default     = 50
+}
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID (optional - only needed if you have multiple zones with same domain name)"
+  type        = string
+  default     = ""
 }
