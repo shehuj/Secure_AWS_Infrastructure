@@ -77,6 +77,7 @@ module "ghost_blog" {
   memory                     = 1024
   log_retention_days         = var.log_retention_days
   enable_deletion_protection = false
+  route53_zone_id            = var.route53_zone_id
 
   # Enable ALB access logging if user analytics is enabled
   enable_alb_access_logs = var.enable_user_analytics

@@ -83,3 +83,9 @@ variable "enable_alb_access_logs" {
   type        = bool
   default     = false
 }
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID (optional - if not provided, will lookup by domain name)"
+  type        = string
+  default     = ""
+}

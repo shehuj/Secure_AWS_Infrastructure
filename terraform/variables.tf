@@ -234,3 +234,9 @@ variable "high_error_threshold" {
   type        = number
   default     = 50
 }
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID (optional - only needed if you have multiple zones with same domain name)"
+  type        = string
+  default     = ""
+}

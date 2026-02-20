@@ -461,22 +461,26 @@ resource "aws_ecs_service" "ghost" {
 # Data source for current region
 data "aws_region" "current" {}
 
-# Data source for Route 53 hosted zone
+# Data source for Route 53 hosted zone (only if zone_id not provided)
 # Extract the root domain from ghost_domain (e.g., "blog.example.com" -> "example.com")
 locals {
   # Split domain by dots and take last 2 parts for root domain
   domain_parts = split(".", var.ghost_domain)
   root_domain  = length(local.domain_parts) > 2 ? "${local.domain_parts[length(local.domain_parts) - 2]}.${local.domain_parts[length(local.domain_parts) - 1]}" : var.ghost_domain
+
+  # Use provided zone_id or lookup zone_id from data source
+  zone_id = var.route53_zone_id != "" ? var.route53_zone_id : data.aws_route53_zone.main[0].zone_id
 }
 
 data "aws_route53_zone" "main" {
+  count        = var.route53_zone_id == "" ? 1 : 0
   name         = "${local.root_domain}."
   private_zone = false
 }
 
 # Route 53 A record for Ghost domain (apex)
 resource "aws_route53_record" "ghost" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = var.ghost_domain
   type    = "A"
 
@@ -489,7 +493,7 @@ resource "aws_route53_record" "ghost" {
 
 # Route 53 A record for www subdomain
 resource "aws_route53_record" "ghost_www" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = "www.${var.ghost_domain}"
   type    = "A"
 
