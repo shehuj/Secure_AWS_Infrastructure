@@ -462,8 +462,15 @@ resource "aws_ecs_service" "ghost" {
 data "aws_region" "current" {}
 
 # Data source for Route 53 hosted zone
+# Extract the root domain from ghost_domain (e.g., "blog.example.com" -> "example.com")
+locals {
+  # Split domain by dots and take last 2 parts for root domain
+  domain_parts = split(".", var.ghost_domain)
+  root_domain  = length(local.domain_parts) > 2 ? "${local.domain_parts[length(local.domain_parts) - 2]}.${local.domain_parts[length(local.domain_parts) - 1]}" : var.ghost_domain
+}
+
 data "aws_route53_zone" "main" {
-  name         = var.ghost_domain
+  name         = "${local.root_domain}."
   private_zone = false
 }
 

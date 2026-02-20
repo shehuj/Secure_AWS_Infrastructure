@@ -17,6 +17,10 @@ terraform {
     # - backend-config.hcl file (recommended)
     # - CLI flags: terraform init -backend-config="bucket=..." -backend-config="key=..."
     # - Environment variables: TF_CLI_ARGS_init
+    bucket         = "ec2-shutdown-lambda-bucket"
+    key            = "terraform.tfstate/Host"
+    region         = "us-east-1"
+    dynamodb_table = "dyning_table"
 
     # Default encryption is enabled
     encrypt = true

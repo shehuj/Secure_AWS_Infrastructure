@@ -123,6 +123,7 @@ module "github_oidc" {
   terraform_state_bucket = var.terraform_state_bucket
   terraform_lock_table   = var.terraform_lock_table
   attach_readonly_policy = false
+  create_oidc_provider   = true # Set to false if OIDC provider already exists
 }
 
 # Observability Module (Prometheus + Grafana)

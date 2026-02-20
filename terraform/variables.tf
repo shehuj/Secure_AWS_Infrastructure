@@ -27,13 +27,13 @@ variable "github_repo" {
 variable "terraform_state_bucket" {
   description = "S3 bucket name for Terraform state"
   type        = string
-  default     = ""
+  default     = "ec2-shutdown-lambda-bucket"
 }
 
 variable "terraform_lock_table" {
   description = "DynamoDB table name for Terraform state locking"
   type        = string
-  default     = "terraform-locks"
+  default     = "dyning_table"
 }
 
 # VPC Variables

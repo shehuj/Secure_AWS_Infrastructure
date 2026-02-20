@@ -38,3 +38,9 @@ variable "attach_readonly_policy" {
   type        = bool
   default     = false
 }
+
+variable "create_oidc_provider" {
+  description = "Whether to create the GitHub OIDC provider. Set to false if it already exists in your AWS account."
+  type        = bool
+  default     = true
+}
