@@ -88,6 +88,22 @@ resource "aws_iam_policy" "ec2_custom" {
           "arn:aws:logs:*:*:log-group:/aws/ec2/${var.environment}/*",
           "arn:aws:logs:*:*:log-group:WebServer/${var.environment}/*"
         ]
+      },
+      {
+        # Allows EC2 instances to fetch DB credentials during Ansible-triggered DB setup
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          "arn:aws:secretsmanager:*:*:secret:${var.environment}/ghost/rds/*"
+        ]
+      },
+      {
+        # Allows EC2 instances to read DB connection parameters (host, port, etc.)
+        Effect = "Allow"
+        Action = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = [
+          "arn:aws:ssm:*:*:parameter/${var.environment}/ghost/db/*"
+        ]
       }
     ]
   })

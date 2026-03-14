@@ -62,6 +62,26 @@ module "user_analytics" {
   tags = var.tags
 }
 
+# RDS MySQL for Ghost Blog
+module "ghost_db" {
+  source = "./modules/rds_mysql"
+
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  subnet_ids         = module.vpc.private_subnet_ids
+  allowed_cidr_blocks = [module.vpc.vpc_cidr]
+
+  # Cost-appropriate defaults for a blog (override in tfvars for production HA)
+  instance_class              = var.db_instance_class
+  multi_az                    = var.db_multi_az
+  deletion_protection         = false
+  final_snapshot_enabled      = false
+  enable_performance_insights = false
+  monitoring_interval         = 0
+
+  tags = var.tags
+}
+
 # Ghost Blog on ECS Fargate
 module "ghost_blog" {
   source = "./modules/ecs_ghost"
@@ -70,7 +90,7 @@ module "ghost_blog" {
   subnet_ids                 = module.vpc.public_subnet_ids
   environment                = var.environment
   ghost_domain               = var.ghost_domain_name
-  certificate_arn            = var.acm_certificate_arn # Consolidated certificate ARN
+  certificate_arn            = var.acm_certificate_arn
   ghost_image                = var.ghost_image
   desired_count              = 2
   cpu                        = 512
@@ -79,11 +99,19 @@ module "ghost_blog" {
   enable_deletion_protection = false
   route53_zone_id            = var.route53_zone_id
 
+  # MySQL database — app user created by Ansible (ghost_db.yml), not master user
+  db_host                = module.ghost_db.db_address
+  db_name                = "ghost"
+  db_user                = module.ghost_db.db_app_username
+  db_password_secret_arn = module.ghost_db.db_app_password_secret_arn
+
   # Enable ALB access logging if user analytics is enabled
   enable_alb_access_logs = var.enable_user_analytics
   alb_logs_bucket        = var.enable_user_analytics ? module.user_analytics[0].alb_logs_bucket : ""
 
   tags = var.tags
+
+  depends_on = [module.ghost_db]
 }
 
 # Monitoring Module (updated for ASG/ALB/ECS)

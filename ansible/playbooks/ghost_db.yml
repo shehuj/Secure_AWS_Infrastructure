@@ -1,0 +1,113 @@
+---
+# Ghost Database Setup Playbook
+#
+# Responsibility split:
+#   Terraform : provisions RDS instance, security groups, Secrets Manager secrets,
+#               SSM parameters for DB endpoint/port/credentials
+#   This playbook : creates the application database + restricted app user
+#                   by delegating SQL commands to an EC2 instance in the VPC
+#                   (GitHub Actions cannot reach the private RDS subnet directly)
+#
+# Prerequisites:
+#   - Terraform apply has completed (RDS is running, SSM params exist)
+#   - At least one EC2 ASG instance is running with Role=web tag
+#   - EC2 IAM role has secretsmanager:GetSecretValue + ssm:GetParameter permissions
+#     (added by Terraform to the prod-asg-ec2-custom-policy)
+#
+# Usage:
+#   ansible-playbook playbooks/ghost_db.yml -e "app_environment=prod"
+
+- name: Configure Ghost RDS MySQL Database
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    aws_region: "us-east-1"
+    environment: "{{ app_environment | default('prod') }}"
+
+  tasks:
+    - name: Find a running ASG web server instance
+      ansible.builtin.shell: >
+        aws ec2 describe-instances
+        --region {{ aws_region }}
+        --filters
+          "Name=tag:Role,Values=web"
+          "Name=instance-state-name,Values=running"
+        --query 'Reservations[0].Instances[0].InstanceId'
+        --output text
+      register: ec2_instance
+      changed_when: false
+      failed_when: ec2_instance.stdout == "" or ec2_instance.stdout == "None"
+
+    - name: Verify SSM connectivity to instance
+      ansible.builtin.shell: >
+        aws ssm describe-instance-information
+        --region {{ aws_region }}
+        --filters "Key=InstanceIds,Values={{ ec2_instance.stdout }}"
+        --query 'InstanceInformationList[0].PingStatus'
+        --output text
+      register: ssm_ping
+      changed_when: false
+      failed_when: ssm_ping.stdout != "Online"
+
+    - name: Run database setup via SSM send-command
+      ansible.builtin.shell: |
+        aws ssm send-command \
+          --region {{ aws_region }} \
+          --instance-ids "{{ ec2_instance.stdout }}" \
+          --document-name "AWS-RunShellScript" \
+          --comment "Ghost DB setup - database and app user" \
+          --parameters 'commands=[
+            "set -euo pipefail",
+            "which mysql 2>/dev/null || yum install -y mysql",
+            "DB_HOST=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/host --query Parameter.Value --output text)",
+            "DB_NAME=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/name --query Parameter.Value --output text)",
+            "APP_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/app-user --query Parameter.Value --output text)",
+            "MASTER_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/master-user --query Parameter.Value --output text)",
+            "MASTER_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ environment }}/ghost/rds/master-password --query SecretString --output text)",
+            "APP_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ environment }}/ghost/rds/app-password --query SecretString --output text)",
+            "mysql -h \"$DB_HOST\" -u \"$MASTER_USER\" -p\"$MASTER_PASS\" -e \"CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\"",
+            "mysql -h \"$DB_HOST\" -u \"$MASTER_USER\" -p\"$MASTER_PASS\" -e \"CREATE USER IF NOT EXISTS $APP_USER@\x27%\x27 IDENTIFIED BY \x27$APP_PASS\x27;\"",
+            "mysql -h \"$DB_HOST\" -u \"$MASTER_USER\" -p\"$MASTER_PASS\" -e \"GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,INDEX,ALTER ON $DB_NAME.* TO $APP_USER@\x27%\x27; FLUSH PRIVILEGES;\"",
+            "echo GHOST_DB_SETUP_COMPLETE"
+          ]' \
+          --output text \
+          --query 'Command.CommandId'
+      register: ssm_command_id
+      changed_when: true
+
+    - name: Wait for SSM command to complete (up to 3 minutes)
+      ansible.builtin.shell: >
+        aws ssm wait command-executed
+        --region {{ aws_region }}
+        --command-id "{{ ssm_command_id.stdout | trim }}"
+        --instance-id "{{ ec2_instance.stdout }}"
+      changed_when: false
+
+    - name: Verify SSM command succeeded
+      ansible.builtin.shell: >
+        aws ssm get-command-invocation
+        --region {{ aws_region }}
+        --command-id "{{ ssm_command_id.stdout | trim }}"
+        --instance-id "{{ ec2_instance.stdout }}"
+        --query 'StatusDetails'
+        --output text
+      register: ssm_status
+      changed_when: false
+      failed_when: ssm_status.stdout != "Success"
+
+    - name: Confirm DB setup output
+      ansible.builtin.shell: >
+        aws ssm get-command-invocation
+        --region {{ aws_region }}
+        --command-id "{{ ssm_command_id.stdout | trim }}"
+        --instance-id "{{ ec2_instance.stdout }}"
+        --query 'StandardOutputContent'
+        --output text
+      register: ssm_output
+      changed_when: false
+
+    - name: Show DB setup result
+      ansible.builtin.debug:
+        msg: "{{ ssm_output.stdout_lines }}"

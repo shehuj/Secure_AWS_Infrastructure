@@ -695,6 +695,35 @@ resource "aws_ecs_service" "prometheus" {
     aws_efs_mount_target.prometheus
   ]
 
+  # Deregister all Service Discovery instances before destroying this service.
+  # Without this, terraform destroy fails because the SD service still has
+  # registered instances (ECS tasks deregister asynchronously).
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      SERVICE_ID=$(aws servicediscovery list-services \
+        --filters Name=NAME,Values=prometheus \
+        --query 'Services[0].Id' \
+        --output text 2>/dev/null || echo "")
+      if [ -n "$SERVICE_ID" ] && [ "$SERVICE_ID" != "None" ]; then
+        echo "Deregistering instances from Service Discovery service: $SERVICE_ID"
+        INSTANCES=$(aws servicediscovery list-instances \
+          --service-id "$SERVICE_ID" \
+          --query 'Instances[].Id' \
+          --output text 2>/dev/null || echo "")
+        for ID in $INSTANCES; do
+          echo "  Deregistering instance: $ID"
+          aws servicediscovery deregister-instance \
+            --service-id "$SERVICE_ID" \
+            --instance-id "$ID" 2>/dev/null || true
+        done
+        echo "Deregistration complete"
+      else
+        echo "No Service Discovery service found for prometheus — skipping"
+      fi
+    EOT
+  }
+
   tags = merge(
     {
       Name        = "${var.environment}-prometheus-service"
@@ -775,6 +804,42 @@ resource "aws_service_discovery_service" "prometheus" {
   }
 
   health_check_custom_config {}
+
+  # Deregister all instances and wait until none remain before Terraform
+  # attempts to delete this SD service. ECS deregisters instances asynchronously
+  # after the ECS service is deleted, so we must poll until the count reaches 0.
+  # Uses self.id directly — list-services NAME filter is not supported by the API.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      SERVICE_ID="${self.id}"
+      echo "Deregistering instances from SD service: $SERVICE_ID"
+      INSTANCES=$(aws servicediscovery list-instances \
+        --service-id "$SERVICE_ID" \
+        --query 'Instances[].Id' \
+        --output text 2>/dev/null || echo "")
+      for ID in $INSTANCES; do
+        echo "  Deregistering: $ID"
+        aws servicediscovery deregister-instance \
+          --service-id "$SERVICE_ID" \
+          --instance-id "$ID" 2>/dev/null || true
+      done
+      echo "Waiting for all instances to clear..."
+      for i in $(seq 1 30); do
+        COUNT=$(aws servicediscovery list-instances \
+          --service-id "$SERVICE_ID" \
+          --query 'length(Instances)' \
+          --output text 2>/dev/null || echo "0")
+        if [ "$COUNT" = "0" ] || [ "$COUNT" = "None" ]; then
+          echo "All instances deregistered — ready to delete SD service"
+          exit 0
+        fi
+        echo "  Still $COUNT instance(s) registered, waiting... ($i/30)"
+        sleep 5
+      done
+      echo "WARNING: instances may still be registered after timeout"
+    EOT
+  }
 
   tags = merge(
     {

@@ -4,10 +4,11 @@ set -e
 # Update system
 yum update -y
 
-# Install CloudWatch agent
-wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
-rpm -U ./amazon-cloudwatch-agent.rpm
-rm -f ./amazon-cloudwatch-agent.rpm
+# Install CloudWatch agent (use curl - wget not available on Amazon Linux 2023)
+curl -fsSL -o /tmp/amazon-cloudwatch-agent.rpm \
+  https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+rpm -U /tmp/amazon-cloudwatch-agent.rpm
+rm -f /tmp/amazon-cloudwatch-agent.rpm
 
 # Install nginx
 yum install -y nginx

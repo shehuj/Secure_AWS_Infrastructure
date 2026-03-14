@@ -14,16 +14,9 @@ name: Security Scanning
 # See docs/SECURITY_TOOLS_SETUP.md for setup instructions
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   schedule:
-    # Run daily at 2 AM UTC
+    # Deep security scan runs daily at 2 AM UTC
+    # PR-level security checks are handled by ci.yml
     - cron: '0 2 * * *'
   workflow_dispatch:
 

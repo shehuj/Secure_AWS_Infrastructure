@@ -46,8 +46,22 @@ output "db_security_group_id" {
   value       = aws_security_group.rds.id
 }
 
-output "connection_string" {
-  description = "MySQL connection string for Ghost"
-  value       = "mysql://${aws_db_instance.ghost.username}:PASSWORD@${aws_db_instance.ghost.endpoint}/${aws_db_instance.ghost.db_name}"
-  sensitive   = true
+output "db_app_username" {
+  description = "Restricted application username (created by Ansible, used by Ghost ECS)"
+  value       = var.app_username
+}
+
+output "db_app_password_secret_arn" {
+  description = "ARN of Secrets Manager secret containing the Ghost app user password"
+  value       = aws_secretsmanager_secret.app_user_password.arn
+}
+
+output "db_master_secret_name" {
+  description = "Secrets Manager secret name for master password (for Ansible)"
+  value       = aws_secretsmanager_secret.rds_password.name
+}
+
+output "db_app_secret_name" {
+  description = "Secrets Manager secret name for app user password (for Ansible)"
+  value       = aws_secretsmanager_secret.app_user_password.name
 }

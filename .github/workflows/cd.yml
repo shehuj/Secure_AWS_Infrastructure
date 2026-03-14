@@ -1,0 +1,203 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'ansible/**'
+      - '.github/workflows/cd.yml'
+  workflow_dispatch:
+    inputs:
+      skip_db_setup:
+        description: 'Skip DB setup (already configured)'
+        type: boolean
+        default: false
+      skip_webserver:
+        description: 'Skip webserver Ansible deploy'
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VAR_route53_zone_id: ${{ secrets.TF_VAR_ROUTE53_ZONE_ID }}
+  TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
+  TF_VAR_grafana_certificate_arn: ${{ secrets.TF_VAR_GRAFANA_CERTIFICATE_ARN }}
+  TF_VAR_grafana_domain_name: ${{ secrets.TF_VAR_GRAFANA_DOMAIN_NAME }}
+  TF_VAR_grafana_admin_password: ${{ secrets.TF_VAR_GRAFANA_ADMIN_PASSWORD }}
+  TF_VAR_root_volume_size: ${{ secrets.TF_VAR_ROOT_VOLUME_SIZE }}
+  TF_VAR_enable_observability: ${{ secrets.TF_VAR_ENABLE_OBSERVABILITY }}
+  TF_VAR_prometheus_retention_days: ${{ secrets.TF_VAR_PROMETHEUS_RETENTION_DAYS }}
+  PYTHON_VERSION: '3.12'
+  ANSIBLE_VERSION: '8.7.0'
+
+jobs:
+  # ── 1. Terraform Apply ───────────────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    outputs:
+      alb_dns_name: ${{ steps.outputs.outputs.alb_dns_name }}
+      ghost_url: ${{ steps.outputs.outputs.ghost_url }}
+      grafana_url: ${{ steps.outputs.outputs.grafana_url }}
+      asg_name: ${{ steps.outputs.outputs.asg_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -out=tfplan -lock-timeout=5m
+
+      - name: Terraform Apply
+        run: |
+          if ! terraform apply -input=false -lock-timeout=5m tfplan; then
+            echo "Saved plan stale — re-planning and applying..."
+            terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m
+            terraform apply -input=false -lock-timeout=5m tfplan-fresh
+          fi
+
+      - name: Capture outputs
+        id: outputs
+        run: |
+          echo "alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "ghost_url=$(terraform output -raw ghost_alb_dns_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "grafana_url=$(terraform output -raw grafana_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "asg_name=$(terraform output -raw asg_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+  # ── 2a. Ghost DB Setup (Ansible) ─────────────────────────────────────────────
+  db-setup:
+    name: Ghost DB Setup
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: ${{ github.event.inputs.skip_db_setup != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible
+        run: pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
+
+      - name: Run ghost_db.yml
+        run: |
+          cd ansible
+          ansible-playbook playbooks/ghost_db.yml \
+            -e "app_environment=prod" \
+            -v
+
+  # ── 2b. Webserver Deploy (Ansible) ───────────────────────────────────────────
+  webserver-deploy:
+    name: Webserver Deploy
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: ${{ github.event.inputs.skip_webserver != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ansible + AWS inventory plugin
+        run: pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
+
+      - name: Wait for ASG instances to be SSM-ready
+        run: |
+          echo "Waiting 30s for new instances to register with SSM..."
+          sleep 30
+
+      - name: Run webserver.yml
+        run: |
+          cd ansible
+          ansible-playbook playbooks/webserver.yml \
+            -i inventory/aws_ec2.yml \
+            -e "app_environment=prod" \
+            --diff
+
+  # ── 3. Ghost ECS Restart ─────────────────────────────────────────────────────
+  ghost-restart:
+    name: Restart Ghost ECS
+    runs-on: ubuntu-latest
+    needs: db-setup
+    steps:
+      - name: Force new ECS deployment
+        run: |
+          aws ecs update-service \
+            --cluster prod-ghost-cluster \
+            --service prod-ghost-service \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Ghost to stabilise
+        run: |
+          aws ecs wait services-stable \
+            --cluster prod-ghost-cluster \
+            --services prod-ghost-service \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Health check
+        run: |
+          GHOST_URL="${{ needs.terraform-apply.outputs.ghost_url }}"
+          if [ -n "$GHOST_URL" ]; then
+            for i in $(seq 1 5); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${GHOST_URL}/ghost/api/v4/admin/site/" || echo "000")
+              echo "Attempt $i: HTTP $STATUS"
+              [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ] && echo "Ghost healthy!" && exit 0
+              sleep 15
+            done
+            echo "WARNING: Ghost health check inconclusive — check manually"
+          fi
+
+  # ── 4. Deployment Summary ────────────────────────────────────────────────────
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [terraform-apply, db-setup, webserver-deploy, ghost-restart]
+    if: always()
+    steps:
+      - name: Write summary
+        run: |
+          TF="${{ needs.terraform-apply.result }}"
+          DB="${{ needs.db-setup.result }}"
+          WS="${{ needs.webserver-deploy.result }}"
+          GH="${{ needs.ghost-restart.result }}"
+
+          icon() { [ "$1" = "success" ] && echo "✅" || [ "$1" = "skipped" ] && echo "⏭️" || echo "❌"; }
+
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform Apply | $(icon $TF) $TF |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ghost DB Setup | $(icon $DB) $DB |" >> $GITHUB_STEP_SUMMARY
+          echo "| Webserver Deploy | $(icon $WS) $WS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ghost ECS Restart | $(icon $GH) $GH |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Endpoints" >> $GITHUB_STEP_SUMMARY
+          echo "- **ALB**: \`${{ needs.terraform-apply.outputs.alb_dns_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ghost**: \`${{ needs.terraform-apply.outputs.ghost_url }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Grafana**: \`${{ needs.terraform-apply.outputs.grafana_url }}\`" >> $GITHUB_STEP_SUMMARY

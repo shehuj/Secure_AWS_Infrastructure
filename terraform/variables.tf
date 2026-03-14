@@ -240,3 +240,16 @@ variable "route53_zone_id" {
   type        = string
   default     = ""
 }
+
+# RDS MySQL Variables
+variable "db_instance_class" {
+  description = "RDS instance class for Ghost MySQL database"
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "db_multi_az" {
+  description = "Enable Multi-AZ for RDS (recommended for production)"
+  type        = bool
+  default     = false
+}
