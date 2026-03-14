@@ -152,7 +152,7 @@ resource "aws_iam_policy" "ghost_task" {
         ]
         Resource = "*"
       },
-      ]
+    ]
   })
 
   tags = merge(

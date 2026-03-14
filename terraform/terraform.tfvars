@@ -11,8 +11,8 @@ root_volume_size = 30
 # SECURITY: All sensitive values must be passed via environment variables or AWS Secrets Manager
 # DO NOT commit secrets to this file
 
-enable_observability      = true
-grafana_domain_name       = "grafana.claudiq.com"
+enable_observability = true
+grafana_domain_name  = "grafana.claudiq.com"
 
 # IMPORTANT: Set these via environment variables or GitHub Secrets:
 # - TF_VAR_grafana_admin_password
