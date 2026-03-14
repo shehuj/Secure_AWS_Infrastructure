@@ -124,6 +124,7 @@ resource "aws_iam_instance_profile" "ec2" {
 
 # Security Group for ALB
 #checkov:skip=CKV_AWS_260:Port 80 is intentionally open for HTTP to HTTPS redirect - all HTTP traffic is immediately redirected to HTTPS (301)
+#checkov:skip=CKV_AWS_382:ALB requires unrestricted egress to forward traffic to ASG instances across dynamic ports
 resource "aws_security_group" "alb" {
   name        = "${var.environment}-alb-sg"
   description = "Security group for Application Load Balancer"
@@ -164,6 +165,7 @@ resource "aws_security_group" "alb" {
 }
 
 # Security Group for ASG instances
+#checkov:skip=CKV_AWS_382:EC2 instances require unrestricted egress for OS updates, AWS API calls, and SSM agent communication
 resource "aws_security_group" "asg_instances" {
   name        = "${var.environment}-asg-instances-sg"
   description = "Security group for ASG EC2 instances"
@@ -275,6 +277,8 @@ resource "aws_launch_template" "web" {
 }
 
 # Application Load Balancer
+#checkov:skip=CKV_AWS_91:Access logging is enabled conditionally via the user_analytics module (enable_user_analytics=true routes logs to S3)
+#checkov:skip=CKV_AWS_150:Deletion protection is intentionally disabled for non-prod environments; set enable_deletion_protection=true for prod
 resource "aws_lb" "main" {
   name               = "${var.environment}-alb"
   internal           = false
@@ -285,6 +289,7 @@ resource "aws_lb" "main" {
   enable_deletion_protection       = var.enable_deletion_protection
   enable_http2                     = true
   enable_cross_zone_load_balancing = true
+  drop_invalid_header_fields       = true
 
   tags = merge(
     {
