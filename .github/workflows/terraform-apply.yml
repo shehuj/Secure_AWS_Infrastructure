@@ -128,7 +128,12 @@ jobs:
       - name: Terraform Apply
         id: apply
         run: |
-          terraform apply -input=false -lock-timeout=5m tfplan
+          # If the saved plan is stale (state changed since plan), re-plan and apply inline
+          if ! terraform apply -input=false -lock-timeout=5m tfplan 2>&1; then
+            echo "⚠️ Saved plan is stale — re-planning and applying..."
+            terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m
+            terraform apply -input=false -lock-timeout=5m tfplan-fresh
+          fi
           echo "url=https://console.aws.amazon.com/vpc" >> $GITHUB_OUTPUT
 
       - name: Get Terraform Outputs
