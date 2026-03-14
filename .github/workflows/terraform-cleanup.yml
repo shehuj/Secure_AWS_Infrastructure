@@ -1,25 +1,25 @@
-name: Terraform Cleanup
+name: Terraform Cleanup & Destroy
 
 on:
   workflow_dispatch:
     inputs:
-      cleanup_type:
-        description: 'Type of cleanup to perform'
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm full infrastructure teardown'
+        required: true
+        type: string
+      environment:
+        description: 'Environment to destroy'
         required: true
         type: choice
         options:
-          - force-unlock
-          - destroy-all
-          - refresh-state
-          - clean-artifacts
-      lock_id:
-        description: 'Lock ID (required for force-unlock)'
+          - prod
+          - staging
+          - dev
+      skip_pre_cleanup:
+        description: 'Skip pre-destroy resource cleanup (not recommended)'
         required: false
-        type: string
-      confirm_destroy:
-        description: 'Type "DESTROY" to confirm infrastructure destruction'
-        required: false
-        type: string
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,13 +33,199 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
-  cleanup:
-    name: Perform Cleanup
+  # ─────────────────────────────────────────────
+  # 1. Guard: validate confirmation input
+  # ─────────────────────────────────────────────
+  validate:
+    name: Validate Destroy Request
     runs-on: ubuntu-latest
+    outputs:
+      confirmed: ${{ steps.check.outputs.confirmed }}
+    steps:
+      - name: Check confirmation
+        id: check
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Confirmation failed. You must type exactly: DESTROY"
+            echo "confirmed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "✅ Destruction confirmed by ${{ github.actor }}"
+          echo "confirmed=true" >> $GITHUB_OUTPUT
+
+      - name: Log intent
+        run: |
+          echo "## ⚠️ Destroy Triggered" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ref | ${{ github.ref }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────
+  # 2. Pre-destroy: resources that block tf destroy
+  # ─────────────────────────────────────────────
+  pre-destroy-cleanup:
+    name: Pre-Destroy Resource Cleanup
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event.inputs.skip_pre_cleanup != 'true'
+    steps:
+      - name: Scale down ECS services to zero
+        run: |
+          echo "==> Scaling down ECS services..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          # Find all ECS clusters for this environment
+          CLUSTERS=$(aws ecs list-clusters --query "clusterArns[?contains(@, '${ENV}')]" --output text 2>/dev/null || echo "")
+
+          if [ -z "$CLUSTERS" ]; then
+            echo "No ECS clusters found for environment: $ENV"
+          else
+            for CLUSTER in $CLUSTERS; do
+              CLUSTER_NAME=$(echo "$CLUSTER" | awk -F/ '{print $NF}')
+              echo "Processing cluster: $CLUSTER_NAME"
+
+              SERVICES=$(aws ecs list-services --cluster "$CLUSTER" --query "serviceArns[]" --output text 2>/dev/null || echo "")
+              for SERVICE in $SERVICES; do
+                SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
+                echo "  Scaling down: $SERVICE_NAME"
+                aws ecs update-service \
+                  --cluster "$CLUSTER" \
+                  --service "$SERVICE" \
+                  --desired-count 0 \
+                  --no-cli-pager 2>/dev/null || echo "  Warning: could not scale $SERVICE_NAME"
+              done
+            done
+          fi
+          echo "✅ ECS scale-down complete"
+
+      - name: Deregister Service Discovery instances
+        run: |
+          echo "==> Deregistering Service Discovery instances..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          # List all service discovery services
+          SERVICES=$(aws servicediscovery list-services \
+            --query "Services[].Id" --output text 2>/dev/null || echo "")
+
+          for SVC_ID in $SERVICES; do
+            INSTANCES=$(aws servicediscovery list-instances \
+              --service-id "$SVC_ID" \
+              --query "Instances[].Id" --output text 2>/dev/null || echo "")
+
+            if [ -n "$INSTANCES" ]; then
+              echo "  Deregistering instances from service: $SVC_ID"
+              for INSTANCE_ID in $INSTANCES; do
+                aws servicediscovery deregister-instance \
+                  --service-id "$SVC_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --no-cli-pager 2>/dev/null || echo "  Warning: could not deregister $INSTANCE_ID"
+              done
+            fi
+          done
+          echo "✅ Service Discovery deregistration complete"
+
+      - name: Disable ALB deletion protection
+        run: |
+          echo "==> Disabling ALB deletion protection..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          ALBS=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, '${ENV}')].LoadBalancerArn" \
+            --output text 2>/dev/null || echo "")
+
+          for ALB_ARN in $ALBS; do
+            ALB_NAME=$(echo "$ALB_ARN" | awk -F/ '{print $(NF-2)}')
+            echo "  Disabling deletion protection on: $ALB_NAME"
+            aws elbv2 modify-load-balancer-attributes \
+              --load-balancer-arn "$ALB_ARN" \
+              --attributes Key=deletion_protection.enabled,Value=false \
+              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $ALB_NAME"
+          done
+          echo "✅ ALB deletion protection disabled"
+
+      - name: Empty S3 buckets tagged with environment
+        run: |
+          echo "==> Emptying S3 buckets for environment: ${{ github.event.inputs.environment }}..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          # Find buckets tagged with this environment
+          ALL_BUCKETS=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null || echo "")
+
+          for BUCKET in $ALL_BUCKETS; do
+            # Check if bucket name contains the environment prefix
+            if echo "$BUCKET" | grep -q "^${ENV}-"; then
+              echo "  Emptying bucket: $BUCKET"
+              # Remove all versioned objects
+              aws s3api list-object-versions \
+                --bucket "$BUCKET" \
+                --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+                --output json 2>/dev/null | \
+                jq -r '.Objects // [] | .[] | "\(.Key) \(.VersionId)"' | \
+                while read -r KEY VID; do
+                  aws s3api delete-object \
+                    --bucket "$BUCKET" --key "$KEY" --version-id "$VID" \
+                    --no-cli-pager 2>/dev/null || true
+                done
+
+              # Remove all delete markers
+              aws s3api list-object-versions \
+                --bucket "$BUCKET" \
+                --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+                --output json 2>/dev/null | \
+                jq -r '.Objects // [] | .[] | "\(.Key) \(.VersionId)"' | \
+                while read -r KEY VID; do
+                  aws s3api delete-object \
+                    --bucket "$BUCKET" --key "$KEY" --version-id "$VID" \
+                    --no-cli-pager 2>/dev/null || true
+                done
+
+              # Remove remaining objects
+              aws s3 rm "s3://$BUCKET" --recursive --no-cli-pager 2>/dev/null || true
+              echo "  ✅ Bucket emptied: $BUCKET"
+            fi
+          done
+          echo "✅ S3 cleanup complete"
+
+      - name: Drain ASG instances
+        run: |
+          echo "==> Draining Auto Scaling Groups..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          ASGS=$(aws autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')].AutoScalingGroupName" \
+            --output text 2>/dev/null || echo "")
+
+          for ASG in $ASGS; do
+            echo "  Setting desired/min to 0 for: $ASG"
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG" \
+              --min-size 0 \
+              --desired-capacity 0 \
+              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $ASG"
+          done
+
+          # Wait for instances to terminate
+          if [ -n "$ASGS" ]; then
+            echo "  Waiting 60s for ASG instances to terminate..."
+            sleep 60
+          fi
+          echo "✅ ASG drain complete"
+
+  # ─────────────────────────────────────────────
+  # 3. Terraform plan the destroy (show what will be removed)
+  # ─────────────────────────────────────────────
+  destroy-plan:
+    name: Plan Destroy
+    runs-on: ubuntu-latest
+    needs: [validate, pre-destroy-cleanup]
+    if: always() && needs.validate.outputs.confirmed == 'true' && (needs.pre-destroy-cleanup.result == 'success' || needs.pre-destroy-cleanup.result == 'skipped')
     defaults:
       run:
         working-directory: ./terraform
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,92 +238,219 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Force Unlock State
-        if: github.event.inputs.cleanup_type == 'force-unlock'
+      - name: Terraform Destroy Plan
+        id: destroy_plan
         run: |
-          if [ -z "${{ github.event.inputs.lock_id }}" ]; then
-            echo "Error: Lock ID is required for force-unlock operation"
-            exit 1
+          terraform plan \
+            -destroy \
+            -input=false \
+            -no-color \
+            -out=destroy.tfplan \
+            2>&1 | tee destroy-plan.txt
+
+          RESOURCE_COUNT=$(grep -c "will be destroyed" destroy-plan.txt || echo "0")
+          echo "resource_count=$RESOURCE_COUNT" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Upload destroy plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: destroy-plan-${{ github.event.inputs.environment }}
+          path: |
+            terraform/destroy.tfplan
+            terraform/destroy-plan.txt
+          retention-days: 1
+
+      - name: Post plan summary
+        run: |
+          echo "## 🗑️ Destroy Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Resources to be destroyed:** ${{ steps.destroy_plan.outputs.resource_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Full plan output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -100 destroy-plan.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────
+  # 4. Execute terraform destroy
+  # ─────────────────────────────────────────────
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs: destroy-plan
+    environment:
+      name: ${{ github.event.inputs.environment }}
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Download destroy plan
+        uses: actions/download-artifact@v4
+        with:
+          name: destroy-plan-${{ github.event.inputs.environment }}
+          path: terraform/
+
+      - name: Terraform Destroy
+        id: destroy
+        run: |
+          echo "==> Starting destroy at $(date -u)"
+          terraform apply \
+            -destroy \
+            -auto-approve \
+            -input=false \
+            -lock-timeout=10m \
+            destroy.tfplan \
+            2>&1 | tee destroy-output.txt
+          echo "==> Destroy completed at $(date -u)"
+        continue-on-error: true
+
+      - name: Upload destroy output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: destroy-output-${{ github.event.inputs.environment }}
+          path: terraform/destroy-output.txt
+          retention-days: 7
+
+      - name: Fail if destroy failed
+        if: steps.destroy.outcome == 'failure'
+        run: |
+          echo "❌ Terraform destroy failed. Check the output artifact for details."
+          echo "Some resources may need manual cleanup in the AWS console."
+          exit 1
+
+  # ─────────────────────────────────────────────
+  # 5. Post-destroy: verify and report
+  # ─────────────────────────────────────────────
+  verify:
+    name: Verify Cleanup
+    runs-on: ubuntu-latest
+    needs: destroy
+    if: always()
+    steps:
+      - name: Check for remaining resources
+        id: check_remaining
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          REMAINING=0
+
+          echo "==> Checking for remaining resources tagged with environment: $ENV"
+
+          # Check ECS clusters
+          CLUSTERS=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@, '${ENV}')]" \
+            --output text 2>/dev/null | wc -w)
+          echo "ECS clusters remaining: $CLUSTERS"
+          REMAINING=$((REMAINING + CLUSTERS))
+
+          # Check ALBs
+          ALBS=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, '${ENV}')].LoadBalancerArn" \
+            --output text 2>/dev/null | wc -w)
+          echo "ALBs remaining: $ALBS"
+          REMAINING=$((REMAINING + ALBS))
+
+          # Check ASGs
+          ASGS=$(aws autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')].AutoScalingGroupName" \
+            --output text 2>/dev/null | wc -w)
+          echo "ASGs remaining: $ASGS"
+          REMAINING=$((REMAINING + ASGS))
+
+          # Check VPCs (by name tag)
+          VPCS=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+            --query "Vpcs[].VpcId" \
+            --output text 2>/dev/null | wc -w)
+          echo "VPCs remaining: $VPCS"
+          REMAINING=$((REMAINING + VPCS))
+
+          echo "remaining=$REMAINING" >> $GITHUB_OUTPUT
+          echo "clusters=$CLUSTERS" >> $GITHUB_OUTPUT
+          echo "albs=$ALBS" >> $GITHUB_OUTPUT
+          echo "asgs=$ASGS" >> $GITHUB_OUTPUT
+          echo "vpcs=$VPCS" >> $GITHUB_OUTPUT
+
+      - name: Write final summary
+        if: always()
+        run: |
+          DESTROY_STATUS="${{ needs.destroy.result }}"
+          REMAINING="${{ steps.check_remaining.outputs.remaining }}"
+
+          echo "## 🏁 Cleanup Final Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Destroy status | $DESTROY_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Completed at | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Remaining Resources" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| ECS Clusters | ${{ steps.check_remaining.outputs.clusters }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Load Balancers | ${{ steps.check_remaining.outputs.albs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Auto Scaling Groups | ${{ steps.check_remaining.outputs.asgs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| VPCs | ${{ steps.check_remaining.outputs.vpcs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$REMAINING" -gt "0" ]; then
+            echo "⚠️ **$REMAINING resource group(s) may still exist.** Check the AWS Console or re-run the workflow." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ **All tracked resources appear to be cleaned up.**" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "Attempting to force unlock with ID: ${{ github.event.inputs.lock_id }}"
-          terraform force-unlock -force ${{ github.event.inputs.lock_id }}
-          echo "State unlocked successfully"
 
-      - name: Refresh State
-        if: github.event.inputs.cleanup_type == 'refresh-state'
-        run: |
-          echo "Refreshing Terraform state..."
-          terraform refresh -input=false
-          echo "State refreshed successfully"
-
-      - name: Destroy Infrastructure
-        if: github.event.inputs.cleanup_type == 'destroy-all'
-        run: |
-          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
-            echo "Error: You must type 'DESTROY' in the confirm_destroy field to proceed"
-            exit 1
-          fi
-          echo "WARNING: Destroying all infrastructure..."
-          terraform destroy -auto-approve -input=false -lock-timeout=5m
-          echo "Infrastructure destroyed successfully"
-
-      - name: Clean Workflow Artifacts
-        if: github.event.inputs.cleanup_type == 'clean-artifacts'
+  # ─────────────────────────────────────────────
+  # 6. Clean up GitHub Actions artifacts
+  # ─────────────────────────────────────────────
+  clean-artifacts:
+    name: Clean Workflow Artifacts
+    runs-on: ubuntu-latest
+    needs: verify
+    if: always()
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Delete terraform plan artifacts
         uses: actions/github-script@v7
         with:
           script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-
-            // Get all artifacts
-            const artifacts = await github.rest.actions.listArtifactsForRepo({
-              owner,
-              repo,
+            const { data: { artifacts } } = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               per_page: 100
             });
 
-            let deletedCount = 0;
+            const stale = artifacts.filter(a =>
+              a.name.startsWith('tfplan') ||
+              a.name.startsWith('destroy-plan') ||
+              a.name.startsWith('terraform-outputs')
+            );
 
-            // Delete old terraform plan artifacts
-            for (const artifact of artifacts.data.artifacts) {
-              if (artifact.name.includes('tfplan')) {
-                console.log(`Deleting artifact: ${artifact.name} (ID: ${artifact.id})`);
-                await github.rest.actions.deleteArtifact({
-                  owner,
-                  repo,
-                  artifact_id: artifact.id
-                });
-                deletedCount++;
-              }
+            for (const artifact of stale) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+              console.log(`Deleted artifact: ${artifact.name}`);
             }
-
-            console.log(`Cleaned up ${deletedCount} terraform plan artifacts`);
-
-      - name: Create Summary
-        if: always()
-        run: |
-          echo "## Cleanup Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Cleanup Type**: ${{ github.event.inputs.cleanup_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          case "${{ github.event.inputs.cleanup_type }}" in
-            "force-unlock")
-              echo "### Force Unlock Details" >> $GITHUB_STEP_SUMMARY
-              echo "- **Lock ID**: ${{ github.event.inputs.lock_id }}" >> $GITHUB_STEP_SUMMARY
-              ;;
-            "destroy-all")
-              echo "### Destroy Details" >> $GITHUB_STEP_SUMMARY
-              echo "All infrastructure has been destroyed" >> $GITHUB_STEP_SUMMARY
-              ;;
-            "refresh-state")
-              echo "### Refresh Details" >> $GITHUB_STEP_SUMMARY
-              echo "Terraform state has been refreshed with current infrastructure" >> $GITHUB_STEP_SUMMARY
-              ;;
-            "clean-artifacts")
-              echo "### Artifact Cleanup" >> $GITHUB_STEP_SUMMARY
-              echo "Old terraform plan artifacts have been removed" >> $GITHUB_STEP_SUMMARY
-              ;;
-          esac
+            console.log(`Cleaned ${stale.length} artifact(s).`);
