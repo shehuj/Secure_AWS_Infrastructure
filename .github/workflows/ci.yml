@@ -1,0 +1,208 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: true
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VAR_route53_zone_id: ${{ secrets.TF_VAR_ROUTE53_ZONE_ID }}
+  TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
+  TF_VAR_grafana_certificate_arn: ${{ secrets.TF_VAR_GRAFANA_CERTIFICATE_ARN }}
+  TF_VAR_grafana_domain_name: ${{ secrets.TF_VAR_GRAFANA_DOMAIN_NAME }}
+  TF_VAR_grafana_admin_password: ${{ secrets.TF_VAR_GRAFANA_ADMIN_PASSWORD }}
+  TF_VAR_root_volume_size: ${{ secrets.TF_VAR_ROOT_VOLUME_SIZE }}
+  TF_VAR_enable_observability: ${{ secrets.TF_VAR_ENABLE_OBSERVABILITY }}
+  TF_VAR_prometheus_retention_days: ${{ secrets.TF_VAR_PROMETHEUS_RETENTION_DAYS }}
+
+jobs:
+  # ── Terraform ────────────────────────────────────────────────────────────────
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    defaults:
+      run:
+        working-directory: ./terraform
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -input=false -out=tfplan -detailed-exitcode -lock-timeout=5m 2>&1 | tee plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          set -e
+          exit 0
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-pr-${{ github.event.pull_request.number }}
+          path: terraform/plan.txt
+          retention-days: 3
+
+  security-check:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --only-verified
+
+      - name: Terraform security (Checkov)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+          output_format: cli
+
+  # ── Ansible ──────────────────────────────────────────────────────────────────
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install ansible==8.7.0 ansible-lint yamllint
+
+      - name: yamllint
+        run: yamllint ansible/ || true
+
+      - name: ansible-lint
+        run: |
+          cd ansible
+          ansible-lint playbooks/*.yml --profile min || true
+
+  # ── PR Comment ───────────────────────────────────────────────────────────────
+  pr-comment:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [terraform-plan, ansible-lint, security-check]
+    if: always()
+    steps:
+      - name: Download plan output
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-pr-${{ github.event.pull_request.number }}
+        continue-on-error: true
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const tfStatus = '${{ needs.terraform-plan.result }}';
+            const ansibleStatus = '${{ needs.ansible-lint.result }}';
+            const securityStatus = '${{ needs.security-check.result }}';
+            const planExitcode = '${{ needs.terraform-plan.outputs.plan_exitcode }}';
+
+            const icon = (s) => s === 'success' ? '✅' : s === 'failure' ? '❌' : '⚠️';
+
+            let planSummary = 'No changes detected.';
+            if (planExitcode === '1') planSummary = '❌ Plan failed — check logs.';
+            else if (planExitcode === '2') planSummary = '⚠️ Changes detected — review before merge.';
+
+            let planDetails = '';
+            try {
+              const txt = fs.readFileSync('plan.txt', 'utf8');
+              planDetails = '\n<details><summary>Full plan output</summary>\n\n```hcl\n' +
+                txt.slice(-12000) + '\n```\n</details>';
+            } catch {}
+
+            const body = [
+              '## CI Results',
+              '',
+              `| Check | Status |`,
+              `|-------|--------|`,
+              `| Terraform Validate | ${icon('${{ needs.terraform-validate.result }}')} ${{ needs.terraform-validate.result }} |`,
+              `| Terraform Plan | ${icon(tfStatus)} ${planSummary} |`,
+              `| Ansible Lint | ${icon(ansibleStatus)} ${ansibleStatus} |`,
+              `| Security Scan | ${icon(securityStatus)} ${securityStatus} |`,
+              planDetails,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## CI Results')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

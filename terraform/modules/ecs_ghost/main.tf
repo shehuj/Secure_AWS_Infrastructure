@@ -77,6 +77,23 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Allow ECS to fetch the DB password from Secrets Manager when launching tasks
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  name = "${var.environment}-ghost-execution-secrets"
+  role = aws_iam_role.ecs_task_execution.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.db_password_secret_arn]
+      }
+    ]
+  })
+}
+
 # IAM Role for ECS Task (application permissions)
 resource "aws_iam_role" "ecs_task" {
   name = "${var.environment}-ghost-task-role"
@@ -123,8 +140,19 @@ resource "aws_iam_policy" "ghost_task" {
           "arn:aws:logs:*:*:log-group:/ecs/${var.environment}/ghost",
           "arn:aws:logs:*:*:log-group:/ecs/${var.environment}/ghost:*"
         ]
-      }
-    ]
+      },
+      {
+        # Required for ECS Exec (execute-command) via SSM
+        Effect = "Allow"
+        Action = [
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
+      },
+      ]
   })
 
   tags = merge(
@@ -245,15 +273,30 @@ resource "aws_ecs_task_definition" "ghost" {
         },
         {
           name  = "database__client"
-          value = "sqlite3"
+          value = "mysql"
         },
         {
-          name  = "database__connection__filename"
-          value = "/var/lib/ghost/content/data/ghost.db"
+          name  = "database__connection__host"
+          value = var.db_host
+        },
+        {
+          name  = "database__connection__database"
+          value = var.db_name
+        },
+        {
+          name  = "database__connection__user"
+          value = var.db_user
         },
         {
           name  = "NODE_ENV"
           value = "production"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "database__connection__password"
+          valueFrom = var.db_password_secret_arn
         }
       ]
 
@@ -436,6 +479,8 @@ resource "aws_ecs_service" "ghost" {
     container_name   = "ghost"
     container_port   = 2368
   }
+
+  enable_execute_command = true
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 50

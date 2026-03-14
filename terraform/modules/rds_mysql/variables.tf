@@ -15,15 +15,15 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "allowed_security_groups" {
-  description = "List of security group IDs allowed to access RDS"
+variable "allowed_cidr_blocks" {
+  description = "List of CIDR blocks allowed to reach RDS on port 3306 (e.g. VPC CIDR)"
   type        = list(string)
 }
 
 variable "mysql_version" {
   description = "MySQL engine version"
   type        = string
-  default     = "8.0.35"
+  default     = "8.0"
 }
 
 variable "instance_class" {
@@ -57,9 +57,15 @@ variable "database_name" {
 }
 
 variable "master_username" {
-  description = "Master username for RDS"
+  description = "Master username for RDS (used by Ansible for DB provisioning)"
   type        = string
   default     = "ghostadmin"
+}
+
+variable "app_username" {
+  description = "Restricted application username created by Ansible (used by Ghost ECS)"
+  type        = string
+  default     = "ghost_app"
 }
 
 variable "multi_az" {

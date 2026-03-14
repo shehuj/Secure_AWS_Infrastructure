@@ -89,3 +89,25 @@ variable "route53_zone_id" {
   type        = string
   default     = ""
 }
+
+variable "db_host" {
+  description = "MySQL database hostname (RDS endpoint)"
+  type        = string
+}
+
+variable "db_name" {
+  description = "MySQL database name"
+  type        = string
+  default     = "ghost"
+}
+
+variable "db_user" {
+  description = "MySQL database master username"
+  type        = string
+  default     = "ghostadmin"
+}
+
+variable "db_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the DB password"
+  type        = string
+}

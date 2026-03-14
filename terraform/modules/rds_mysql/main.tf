@@ -39,11 +39,11 @@ resource "aws_security_group" "rds" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description     = "MySQL from ECS tasks"
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = var.allowed_security_groups
+    description = "MySQL from within VPC"
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = var.allowed_cidr_blocks
   }
 
   egress {
@@ -67,18 +67,18 @@ resource "aws_security_group" "rds" {
 # Random password for RDS master user
 resource "random_password" "rds_password" {
   length  = 32
-  special = true
+  special = false # Avoid shell-unsafe characters in SSM commands
 }
 
-# Store RDS password in Secrets Manager
+# Store RDS master password in Secrets Manager (used by Ansible for DB setup)
 resource "aws_secretsmanager_secret" "rds_password" {
   name                    = "${var.environment}/ghost/rds/master-password"
-  description             = "Master password for Ghost RDS MySQL instance"
+  description             = "Master password for Ghost RDS MySQL instance - used by Ansible for DB provisioning"
   recovery_window_in_days = 7
 
   tags = merge(
     {
-      Name        = "${var.environment}-ghost-rds-password"
+      Name        = "${var.environment}-ghost-rds-master-password"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
@@ -89,6 +89,73 @@ resource "aws_secretsmanager_secret" "rds_password" {
 resource "aws_secretsmanager_secret_version" "rds_password" {
   secret_id     = aws_secretsmanager_secret.rds_password.id
   secret_string = random_password.rds_password.result
+}
+
+# Random password for the restricted application user (used by Ghost ECS)
+resource "random_password" "app_user_password" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "app_user_password" {
+  name                    = "${var.environment}/ghost/rds/app-password"
+  description             = "Ghost application user password - injected into Ghost ECS tasks"
+  recovery_window_in_days = 7
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-ghost-rds-app-password"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_secretsmanager_secret_version" "app_user_password" {
+  secret_id     = aws_secretsmanager_secret.app_user_password.id
+  secret_string = random_password.app_user_password.result
+}
+
+# SSM Parameters so Ansible (and other services) can discover the DB without hardcoding
+resource "aws_ssm_parameter" "db_host" {
+  name  = "/${var.environment}/ghost/db/host"
+  type  = "String"
+  value = aws_db_instance.ghost.address
+
+  tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
+}
+
+resource "aws_ssm_parameter" "db_port" {
+  name  = "/${var.environment}/ghost/db/port"
+  type  = "String"
+  value = tostring(aws_db_instance.ghost.port)
+
+  tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
+}
+
+resource "aws_ssm_parameter" "db_name" {
+  name  = "/${var.environment}/ghost/db/name"
+  type  = "String"
+  value = var.database_name
+
+  tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
+}
+
+resource "aws_ssm_parameter" "db_master_user" {
+  name  = "/${var.environment}/ghost/db/master-user"
+  type  = "String"
+  value = var.master_username
+
+  tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
+}
+
+resource "aws_ssm_parameter" "db_app_user" {
+  name  = "/${var.environment}/ghost/db/app-user"
+  type  = "String"
+  value = var.app_username
+
+  tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
 
 # RDS MySQL Instance
@@ -102,9 +169,9 @@ resource "aws_db_instance" "ghost" {
   max_allocated_storage = var.max_allocated_storage
   storage_type          = "gp3"
   storage_encrypted     = true
-  iops                  = var.iops
 
-  db_name  = var.database_name
+  # db_name intentionally omitted — Ansible creates the database and
+  # restricted app user after the instance is provisioned (see ghost_db.yml)
   username = var.master_username
   password = random_password.rds_password.result
 
