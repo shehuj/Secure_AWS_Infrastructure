@@ -210,6 +210,7 @@ __marimo__/
 *.tfstate
 *.tfstate.*
 *.tfvars
+!terraform.tfvars
 !terraform.tfvars.example
 .terraform/
 # .terraform.lock.hcl should be committed to version control per HashiCorp best practices
