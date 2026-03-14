@@ -234,6 +234,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [terraform-security, ansible-security, secret-scanning, code-quality]
     if: always()
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
