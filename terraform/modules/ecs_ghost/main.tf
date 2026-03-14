@@ -473,7 +473,7 @@ locals {
 }
 
 data "aws_route53_zone" "main" {
-  count        = var.route53_zone_id == "" ? 1 : 0
+  count        = var.route53_zone_id == "" && var.ghost_domain != "" ? 1 : 0
   name         = "${local.root_domain}."
   private_zone = false
 }
