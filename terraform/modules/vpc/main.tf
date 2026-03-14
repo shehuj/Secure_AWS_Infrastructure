@@ -49,6 +49,20 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Restrict default security group - deny all ingress and egress (CKV2_AWS_12)
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-default-sg-restricted"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
 # Internet Gateway
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id

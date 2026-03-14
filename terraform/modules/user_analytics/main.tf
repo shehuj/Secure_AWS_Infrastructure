@@ -189,6 +189,10 @@ resource "aws_cloudwatch_log_group" "engagement" {
 }
 
 # Enable ALB Access Logs for detailed visitor information
+#checkov:skip=CKV_AWS_144:Cross-region replication not required for ALB access logs; lifecycle rules archive to Glacier for durability
+#checkov:skip=CKV_AWS_21:Versioning not required for ALB access logs; logs are immutable append-only objects
+#checkov:skip=CKV_AWS_145:KMS encryption not configured for this bucket; AES256 server-side encryption is applied via aws_s3_bucket_server_side_encryption_configuration
+#checkov:skip=CKV_AWS_18:Enabling access logging on a logs bucket would create circular logging; this bucket's purpose is to receive logs
 resource "aws_s3_bucket" "alb_logs" {
   bucket = "${var.environment}-ghost-alb-logs-${data.aws_caller_identity.current.account_id}"
 
