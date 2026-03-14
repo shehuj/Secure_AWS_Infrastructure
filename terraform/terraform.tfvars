@@ -22,3 +22,9 @@ grafana_certificate_arn = "arn:aws:acm:us-east-1:615299732970:certificate/6025f2
 # grafana_admin_password will be provided via TF_VAR_grafana_admin_password or fetched from AWS Secrets Manager
 
 prometheus_retention_days = 15
+# All variables are injected via GitHub Secrets as TF_VAR_* environment variables.
+# See .github/workflows/terraform-plan.yml, terraform-apply.yml, terraform-cleanup.yml.
+#
+# For local development, copy terraform.tfvars.example and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars.local
+#   terraform plan -var-file=terraform.tfvars.local
