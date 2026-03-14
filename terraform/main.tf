@@ -42,8 +42,8 @@ module "user_analytics" {
   count  = var.enable_user_analytics ? 1 : 0
   source = "./modules/user_analytics"
 
-  environment  = var.environment
-  domain_name  = var.ghost_domain_name
+  environment = var.environment
+  domain_name = var.ghost_domain_name
 
   # Sampling and tracking configuration
   rum_sample_rate = var.rum_sample_rate
@@ -57,7 +57,7 @@ module "user_analytics" {
   # Alerting thresholds
   low_traffic_threshold = var.low_traffic_threshold
   high_error_threshold  = var.high_error_threshold
-  alarm_actions         = []  # Will be set after monitoring module is created
+  alarm_actions         = [] # Will be set after monitoring module is created
 
   tags = var.tags
 }
@@ -66,9 +66,9 @@ module "user_analytics" {
 module "ghost_db" {
   source = "./modules/rds_mysql"
 
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  subnet_ids         = module.vpc.private_subnet_ids
+  environment         = var.environment
+  vpc_id              = module.vpc.vpc_id
+  subnet_ids          = module.vpc.private_subnet_ids
   allowed_cidr_blocks = [module.vpc.vpc_cidr]
 
   # Cost-appropriate defaults for a blog (override in tfvars for production HA)

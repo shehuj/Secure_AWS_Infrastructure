@@ -23,13 +23,13 @@ resource "aws_rum_app_monitor" "ghost" {
   domain = var.domain_name
 
   app_monitor_configuration {
-    allow_cookies         = true
-    enable_xray           = true
-    session_sample_rate   = var.rum_sample_rate
-    telemetries           = ["errors", "performance", "http"]
-    favorite_pages        = var.favorite_pages
-    excluded_pages        = var.excluded_pages
-    included_pages        = var.included_pages
+    allow_cookies       = true
+    enable_xray         = true
+    session_sample_rate = var.rum_sample_rate
+    telemetries         = ["errors", "performance", "http"]
+    favorite_pages      = var.favorite_pages
+    excluded_pages      = var.excluded_pages
+    included_pages      = var.included_pages
 
     # Guest user tracking
     guest_role_arn = aws_iam_role.rum_guest.arn
@@ -378,10 +378,10 @@ resource "aws_cloudwatch_log_metric_filter" "visitors_by_country" {
   pattern        = "[timestamp, visitor_id, country, ...]"
 
   metric_transformation {
-    name       = "VisitorsByCountry"
-    namespace  = "Ghost/Analytics"
-    value      = "1"
-    unit       = "Count"
+    name      = "VisitorsByCountry"
+    namespace = "Ghost/Analytics"
+    value     = "1"
+    unit      = "Count"
     dimensions = {
       Country = "$country"
     }
@@ -501,9 +501,9 @@ resource "aws_cloudwatch_dashboard" "user_analytics" {
       {
         type = "log"
         properties = {
-          query   = "SOURCE '${aws_cloudwatch_log_group.pageviews.name}' | fields @timestamp, visitor_id, page, referrer | sort @timestamp desc | limit 20"
-          region  = data.aws_region.current.id
-          title   = "Recent Page Views"
+          query  = "SOURCE '${aws_cloudwatch_log_group.pageviews.name}' | fields @timestamp, visitor_id, page, referrer | sort @timestamp desc | limit 20"
+          region = data.aws_region.current.id
+          title  = "Recent Page Views"
         }
       }
     ]
