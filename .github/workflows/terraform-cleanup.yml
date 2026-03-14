@@ -199,6 +199,53 @@ jobs:
           done
           echo "✅ S3 cleanup complete"
 
+      - name: Wait for ECS tasks to stop (drain DB connections)
+        run: |
+          echo "==> Waiting for ECS tasks to stop before RDS teardown..."
+          ENV="${{ github.event.inputs.environment }}"
+          CLUSTERS=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@, '${ENV}')]" \
+            --output text 2>/dev/null || echo "")
+          for CLUSTER in $CLUSTERS; do
+            SERVICES=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[]" --output text 2>/dev/null || echo "")
+            for SERVICE in $SERVICES; do
+              SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
+              echo "  Waiting for $SERVICE_NAME to reach 0 running tasks..."
+              for i in $(seq 1 24); do
+                RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" \
+                  --services "$SERVICE" \
+                  --query 'services[0].runningCount' \
+                  --output text 2>/dev/null || echo "0")
+                [ "$RUNNING" = "0" ] && echo "  $SERVICE_NAME stopped." && break
+                echo "  Still $RUNNING task(s) running ($i/24)..."
+                sleep 10
+              done
+            done
+          done
+          echo "✅ ECS tasks stopped — DB connections cleared"
+
+      - name: Disable RDS deletion protection
+        run: |
+          echo "==> Disabling RDS deletion protection..."
+          ENV="${{ github.event.inputs.environment }}"
+          DBS=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, '${ENV}')].DBInstanceIdentifier" \
+            --output text 2>/dev/null || echo "")
+          for DB in $DBS; do
+            echo "  Disabling deletion protection on: $DB"
+            aws rds modify-db-instance \
+              --db-instance-identifier "$DB" \
+              --no-deletion-protection \
+              --apply-immediately \
+              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $DB"
+          done
+          if [ -n "$DBS" ]; then
+            echo "  Waiting 15s for RDS modification to apply..."
+            sleep 15
+          fi
+          echo "✅ RDS deletion protection disabled"
+
       - name: Drain ASG instances
         run: |
           echo "==> Draining Auto Scaling Groups..."
@@ -388,11 +435,26 @@ jobs:
           echo "VPCs remaining: $VPCS"
           REMAINING=$((REMAINING + VPCS))
 
+          # Check RDS instances
+          RDS=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, '${ENV}')].DBInstanceIdentifier" \
+            --output text 2>/dev/null | wc -w)
+          echo "RDS instances remaining: $RDS"
+          REMAINING=$((REMAINING + RDS))
+
+          # Check Secrets Manager secrets still scheduled for deletion
+          SECRETS=$(aws secretsmanager list-secrets \
+            --filters Key=name,Values="${ENV}/ghost/rds" \
+            --query 'SecretList[].Name' \
+            --output text 2>/dev/null | wc -w)
+          echo "Secrets Manager secrets remaining: $SECRETS"
+
           echo "remaining=$REMAINING" >> $GITHUB_OUTPUT
           echo "clusters=$CLUSTERS" >> $GITHUB_OUTPUT
           echo "albs=$ALBS" >> $GITHUB_OUTPUT
           echo "asgs=$ASGS" >> $GITHUB_OUTPUT
           echo "vpcs=$VPCS" >> $GITHUB_OUTPUT
+          echo "rds=$RDS" >> $GITHUB_OUTPUT
 
       - name: Write final summary
         if: always()
@@ -417,6 +479,7 @@ jobs:
           echo "| ECS Clusters | ${{ steps.check_remaining.outputs.clusters }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Load Balancers | ${{ steps.check_remaining.outputs.albs }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Auto Scaling Groups | ${{ steps.check_remaining.outputs.asgs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS Instances | ${{ steps.check_remaining.outputs.rds }} |" >> $GITHUB_STEP_SUMMARY
           echo "| VPCs | ${{ steps.check_remaining.outputs.vpcs }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
