@@ -55,6 +55,9 @@ jobs:
       ghost_url: ${{ steps.outputs.outputs.ghost_url }}
       grafana_url: ${{ steps.outputs.outputs.grafana_url }}
       asg_name: ${{ steps.outputs.outputs.asg_name }}
+      ecs_cluster_name: ${{ steps.outputs.outputs.ecs_cluster_name }}
+      ecs_service_name: ${{ steps.outputs.outputs.ecs_service_name }}
+      rds_identifier: ${{ steps.outputs.outputs.rds_identifier }}
     steps:
       - uses: actions/checkout@v4
 
@@ -84,6 +87,9 @@ jobs:
           echo "ghost_url=$(terraform output -raw ghost_alb_dns_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
           echo "grafana_url=$(terraform output -raw grafana_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
           echo "asg_name=$(terraform output -raw asg_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "ecs_cluster_name=$(terraform output -raw ghost_ecs_cluster_name 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-cluster")" >> $GITHUB_OUTPUT
+          echo "ecs_service_name=$(terraform output -raw ghost_ecs_service_name 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-service")" >> $GITHUB_OUTPUT
+          echo "rds_identifier=$(terraform output -raw rds_identifier 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-db")" >> $GITHUB_OUTPUT
         continue-on-error: true
 
   # ── 2a. Ghost DB Setup (Ansible) ─────────────────────────────────────────────
@@ -102,14 +108,18 @@ jobs:
       - name: Install Ansible
         run: pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
 
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
       # Wait for RDS to finish provisioning before Ansible tries to connect.
       # Terraform marks apply complete once the resource is created, but RDS
       # can take several more minutes to reach the "available" state.
       - name: Wait for RDS instance to be available
         run: |
-          echo "Waiting for RDS prod-ghost-db to be available..."
+          RDS_ID="${{ needs.terraform-apply.outputs.rds_identifier }}"
+          echo "Waiting for RDS ${RDS_ID} to be available..."
           aws rds wait db-instance-available \
-            --db-instance-identifier prod-ghost-db \
+            --db-instance-identifier "${RDS_ID}" \
             --region ${{ env.AWS_REGION }}
           echo "RDS is available."
 
@@ -144,6 +154,9 @@ jobs:
       - name: Install Ansible + AWS inventory plugin
         run: pip install ansible==${{ env.ANSIBLE_VERSION }} boto3 botocore
 
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
       - name: Wait for ASG instances to be SSM-ready
         run: |
           echo "Waiting 30s for new instances to register with SSM..."
@@ -171,17 +184,21 @@ jobs:
     steps:
       - name: Force new ECS deployment
         run: |
+          CLUSTER="${{ needs.terraform-apply.outputs.ecs_cluster_name }}"
+          SERVICE="${{ needs.terraform-apply.outputs.ecs_service_name }}"
           aws ecs update-service \
-            --cluster prod-ghost-cluster \
-            --service prod-ghost-service \
+            --cluster "${CLUSTER}" \
+            --service "${SERVICE}" \
             --force-new-deployment \
             --region ${{ env.AWS_REGION }}
 
       - name: Wait for Ghost to stabilise
         run: |
+          CLUSTER="${{ needs.terraform-apply.outputs.ecs_cluster_name }}"
+          SERVICE="${{ needs.terraform-apply.outputs.ecs_service_name }}"
           aws ecs wait services-stable \
-            --cluster prod-ghost-cluster \
-            --services prod-ghost-service \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}" \
             --region ${{ env.AWS_REGION }}
 
       - name: Health check
