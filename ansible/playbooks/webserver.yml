@@ -1,118 +1,70 @@
 ---
-- name: Configure Web Servers
-  hosts: aws_ec2
-  become: true
-  gather_facts: true
+# Web Server Configuration Playbook
+#
+# Runs on localhost (the CI runner). Uses SSM send-command to push nginx
+# configuration and static web content to all running ASG instances.
+# No SSH required — all connectivity is through AWS SSM Session Manager.
+#
+# This is the same architectural pattern as ghost_db.yml: find instances,
+# build the payload locally, send via SSM, wait for completion.
+
+- name: Configure Web Servers via SSM
+  hosts: localhost
+  connection: local
+  gather_facts: true  # Needed for ansible_date_time (deploy timestamp in footer)
 
   vars:
-    nginx_port: 80
-    nginx_ssl_port: 443
-    app_directory: /var/www/html
-    company_name: "SecureCloud"
-    app_environment: "production"
     aws_region: "us-east-1"
+    environment: "{{ app_environment | default('prod') }}"
+    app_directory: /var/www/html
+    nginx_port: 80
+    company_name: "SecureCloud"
 
   tasks:
-    - name: Update system packages
-      ansible.builtin.dnf:
-        name: '*'
-        state: present
-        update_cache: true
-      register: yum_update
-      failed_when: false
-      changed_when: yum_update.changed and yum_update.results | length > 0
+    - name: Find running ASG web instances
+      ansible.builtin.shell: >
+        aws ec2 describe-instances
+        --region {{ aws_region }}
+        --filters
+          "Name=tag:Environment,Values={{ environment }}"
+          "Name=tag:Role,Values=web"
+          "Name=instance-state-name,Values=running"
+        --query 'Reservations[].Instances[].InstanceId'
+        --output text
+      register: instance_ids_raw
+      changed_when: false
+      failed_when: instance_ids_raw.stdout == "" or instance_ids_raw.stdout == "None"
 
-    - name: Install required packages
-      ansible.builtin.dnf:
-        name:
-          - nginx
-          - python3-pip
-          - git
-          - wget
-          - curl
-        state: present
+    - name: Parse instance IDs
+      ansible.builtin.set_fact:
+        instance_ids: "{{ instance_ids_raw.stdout.split() }}"
 
-    - name: Install AWS CLI and Python packages
-      ansible.builtin.pip:
-        name:
-          - awscli
-          - boto3
-        state: present
-        executable: pip3
-      register: pip_install
-      changed_when: pip_install.changed
+    - name: Show target instances
+      ansible.builtin.debug:
+        msg: "Deploying to instances: {{ instance_ids }}"
 
-    - name: Ensure nginx is stopped before configuration
-      ansible.builtin.systemd:
-        name: nginx
-        state: stopped
-      failed_when: false
+    - name: Verify SSM connectivity to all instances
+      ansible.builtin.shell: >
+        aws ssm describe-instance-information
+        --region {{ aws_region }}
+        --filters "Key=InstanceIds,Values={{ item }}"
+        --query 'InstanceInformationList[0].PingStatus'
+        --output text
+      register: ssm_ping
+      changed_when: false
+      retries: 24
+      delay: 10
+      until: ssm_ping.stdout == "Online"
+      failed_when: ssm_ping.stdout != "Online"
+      loop: "{{ instance_ids }}"
 
-    - name: Create application directory
-      ansible.builtin.file:
-        path: "{{ app_directory }}"
-        state: directory
-        owner: nginx
-        group: nginx
-        mode: '0755'
+    # ── Build file payloads ───────────────────────────────────────────────────
 
-    - name: Create static assets directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: nginx
-        group: nginx
-        mode: '0755'
-      loop:
-        - "{{ app_directory }}/static"
-        - "{{ app_directory }}/static/css"
-        - "{{ app_directory }}/static/js"
-        - "{{ app_directory }}/static/images"
-
-    - name: Deploy CSS stylesheet
-      ansible.builtin.copy:
-        src: css/styles.css
-        dest: "{{ app_directory }}/static/css/styles.css"
-        owner: nginx
-        group: nginx
-        mode: '0644'
-
-    - name: Deploy JavaScript application
-      ansible.builtin.copy:
-        src: js/app.js
-        dest: "{{ app_directory }}/static/js/app.js"
-        owner: nginx
-        group: nginx
-        mode: '0644'
-
-    - name: Deploy main page from template
-      ansible.builtin.template:
-        src: index.html.j2
-        dest: "{{ app_directory }}/index.html"
-        owner: nginx
-        group: nginx
-        mode: '0644'
-
-    - name: Deploy documentation page from template
-      ansible.builtin.template:
-        src: docs.html.j2
-        dest: "{{ app_directory }}/docs.html"
-        owner: nginx
-        group: nginx
-        mode: '0644'
-
-    - name: Deploy health check endpoint
-      ansible.builtin.copy:
-        dest: "{{ app_directory }}/health"
-        content: "OK"
-        owner: nginx
-        group: nginx
-        mode: '0644'
-
-    - name: Configure nginx
-      ansible.builtin.copy:
-        dest: /etc/nginx/nginx.conf
-        content: |
+    - name: Build nginx config (Jinja2 expands nginx_port and app_directory)
+      ansible.builtin.set_fact:
+        nginx_conf_b64: "{{ nginx_conf_content | b64encode }}"
+      vars:
+        nginx_conf_content: |
           user nginx;
           worker_processes auto;
           error_log /var/log/nginx/error.log warn;
@@ -127,114 +79,183 @@
               default_type application/octet-stream;
 
               log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                            '$status $body_bytes_sent "$http_referer" '
-                            '"$http_user_agent" "$http_x_forwarded_for"';
+                              '$status $body_bytes_sent "$http_referer" '
+                              '"$http_user_agent" "$http_x_forwarded_for"';
 
               access_log /var/log/nginx/access.log main;
 
-              sendfile on;
-              tcp_nopush on;
-              tcp_nodelay on;
+              sendfile        on;
+              tcp_nopush      on;
+              tcp_nodelay     on;
               keepalive_timeout 65;
               types_hash_max_size 2048;
-              server_tokens off;
+              server_tokens   off;
 
-              # Security headers
-              add_header X-Frame-Options "SAMEORIGIN" always;
-              add_header X-Content-Type-Options "nosniff" always;
-              add_header X-XSS-Protection "1; mode=block" always;
+              add_header X-Frame-Options       "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff"   always;
+              add_header X-XSS-Protection      "1; mode=block" always;
 
               server {
                   listen {{ nginx_port }} default_server;
                   listen [::]:{{ nginx_port }} default_server;
                   server_name _;
-                  root {{ app_directory }};
+                  root  {{ app_directory }};
                   index index.html;
 
-                  # Enable gzip compression
                   gzip on;
                   gzip_vary on;
                   gzip_min_length 1024;
-                  gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
+                  gzip_types text/plain text/css text/xml text/javascript
+                             application/x-javascript application/xml+rss application/json;
 
-                  # Main page
                   location = / {
                       try_files /index.html =404;
                   }
 
-                  # Documentation page
                   location = /docs {
                       try_files /docs.html =404;
                   }
 
-                  # Static assets with caching
                   location /static/ {
                       expires 7d;
                       add_header Cache-Control "public, immutable";
                       access_log off;
                   }
 
-                  # Health check endpoint
                   location /health {
                       access_log off;
                       return 200 "OK\n";
                       add_header Content-Type text/plain;
                   }
 
-                  # API placeholder endpoints
                   location /api/health {
                       access_log off;
                       return 200 '{"status":"healthy","timestamp":"$time_iso8601"}\n';
                       add_header Content-Type application/json;
                   }
 
-                  # Default fallback
                   location / {
                       try_files $uri $uri/ =404;
                   }
               }
           }
-        owner: root
-        group: root
-        mode: '0644'
-      notify: Restart nginx
 
-    - name: Ensure nginx is enabled and started
-      ansible.builtin.systemd:
-        name: nginx
-        enabled: true
-        state: started
+    # Templates are rendered here on the CI runner. gather_facts: true provides
+    # ansible_date_time (deploy timestamp). EC2-specific facts are overridden
+    # below so the page shows meaningful values instead of CI runner facts.
+    - name: Encode static files and render templates
+      ansible.builtin.set_fact:
+        styles_css_b64: "{{ lookup('file', playbook_dir + '/../files/css/styles.css') | b64encode }}"
+        app_js_b64: "{{ lookup('file', playbook_dir + '/../files/js/app.js') | b64encode }}"
+        index_html_b64: "{{ lookup('template', playbook_dir + '/../templates/index.html.j2') | b64encode }}"
+        docs_html_b64: "{{ lookup('template', playbook_dir + '/../templates/docs.html.j2') | b64encode }}"
+      vars:
+        # Override CI runner gathered facts so the rendered page shows
+        # correct environment values rather than runner-specific data.
+        ansible_hostname: "{{ environment }}-asg-webserver"
+        ansible_default_ipv4:
+          address: "10.0.x.x (assigned at boot)"
+        ansible_ec2_instance_type: "t3.micro"
+        ansible_distribution: "Amazon Linux"
+        ansible_distribution_version: "2023"
+        ansible_kernel: "6.1 (Amazon Linux 2023)"
 
-    - name: Wait for nginx to be ready
-      ansible.builtin.wait_for:
-        port: "{{ nginx_port }}"
-        delay: 2
-        timeout: 30
+    # ── Build and write SSM params JSON ──────────────────────────────────────
 
-    - name: Test nginx is responding
-      ansible.builtin.uri:
-        url: "http://localhost:{{ nginx_port }}/health"
-        return_content: true
-        status_code: 200
-      register: health_check
-      failed_when: health_check.content != "OK\n"
-      changed_when: false  # Health checks don't change anything
-      retries: 3
-      delay: 2
+    - name: Write SSM deploy params to temp file
+      ansible.builtin.copy:
+        dest: /tmp/webserver_params.json
+        mode: "0600"
+        content: "{{ {'commands': deploy_commands} | to_json }}"
+      vars:
+        deploy_commands:
+          - "set -euo pipefail"
+          - "mkdir -p {{ app_directory }}/static/css {{ app_directory }}/static/js {{ app_directory }}/static/images"
+          - "printf '%s' '{{ nginx_conf_b64 }}' | base64 -d > /etc/nginx/nginx.conf"
+          - "printf '%s' '{{ styles_css_b64 }}' | base64 -d > {{ app_directory }}/static/css/styles.css"
+          - "printf '%s' '{{ app_js_b64 }}' | base64 -d > {{ app_directory }}/static/js/app.js"
+          - "printf '%s' '{{ index_html_b64 }}' | base64 -d > {{ app_directory }}/index.html"
+          - "printf '%s' '{{ docs_html_b64 }}' | base64 -d > {{ app_directory }}/docs.html"
+          - "echo -n OK > {{ app_directory }}/health"
+          - "chown -R nginx:nginx {{ app_directory }}"
+          - "nginx -t"
+          - "systemctl reload nginx || systemctl restart nginx"
+          - "curl -sf http://localhost:{{ nginx_port }}/health | grep -q OK && echo 'Health check passed'"
+          - "echo WEBSERVER_DEPLOY_COMPLETE"
 
-    - name: Display deployment status
+    # ── Send command to all instances in parallel ─────────────────────────────
+
+    - name: Dispatch SSM command to each instance
+      ansible.builtin.shell: |
+        aws ssm send-command \
+          --region {{ aws_region }} \
+          --instance-ids "{{ item }}" \
+          --document-name "AWS-RunShellScript" \
+          --comment "Webserver deploy - nginx and static files" \
+          --parameters file:///tmp/webserver_params.json \
+          --output text \
+          --query 'Command.CommandId'
+      register: ssm_commands
+      changed_when: true
+      loop: "{{ instance_ids }}"
+
+    - name: Wait for all SSM commands to complete
+      ansible.builtin.shell: >
+        aws ssm wait command-executed
+        --region {{ aws_region }}
+        --command-id "{{ item.stdout | trim }}"
+        --instance-id "{{ instance_ids[idx] }}"
+      loop: "{{ ssm_commands.results }}"
+      loop_control:
+        index_var: idx
+      changed_when: false
+
+    - name: Verify all deployments succeeded
+      ansible.builtin.shell: |
+        STATUS=$(aws ssm get-command-invocation \
+          --region {{ aws_region }} \
+          --command-id "{{ item.stdout | trim }}" \
+          --instance-id "{{ instance_ids[idx] }}" \
+          --query 'StatusDetails' \
+          --output text)
+        if [ "$STATUS" != "Success" ]; then
+          echo "FAILED on {{ instance_ids[idx] }}: $STATUS"
+          aws ssm get-command-invocation \
+            --region {{ aws_region }} \
+            --command-id "{{ item.stdout | trim }}" \
+            --instance-id "{{ instance_ids[idx] }}" \
+            --query 'StandardErrorContent' \
+            --output text
+          exit 1
+        fi
+        echo "OK: {{ instance_ids[idx] }}"
+      loop: "{{ ssm_commands.results }}"
+      loop_control:
+        index_var: idx
+      changed_when: false
+
+    - name: Show deployment output
+      ansible.builtin.shell: >
+        aws ssm get-command-invocation
+        --region {{ aws_region }}
+        --command-id "{{ item.stdout | trim }}"
+        --instance-id "{{ instance_ids[idx] }}"
+        --query 'StandardOutputContent'
+        --output text
+      loop: "{{ ssm_commands.results }}"
+      loop_control:
+        index_var: idx
+      register: ssm_outputs
+      changed_when: false
+
+    - name: Display results per instance
       ansible.builtin.debug:
-        msg: |
-          ========================================
-          Deployment completed successfully!
-          Server: {{ ansible_hostname }}
-          IP: {{ ansible_default_ipv4.address }}
-          Health Check: {{ health_check.status }} OK
-          ========================================
+        msg: "{{ instance_ids[idx] }}: {{ item.stdout_lines }}"
+      loop: "{{ ssm_outputs.results }}"
+      loop_control:
+        index_var: idx
 
-  handlers:
-    - name: Restart nginx
-      ansible.builtin.systemd:
-        name: nginx
-        state: restarted
-        daemon_reload: true
+    - name: Clean up temp file
+      ansible.builtin.file:
+        path: /tmp/webserver_params.json
+        state: absent

@@ -153,9 +153,8 @@ jobs:
         run: |
           cd ansible
           ansible-playbook playbooks/webserver.yml \
-            -i inventory/aws_ec2.yml \
             -e "app_environment=prod" \
-            --diff
+            -v
 
   # ── 3. Ghost ECS Restart ─────────────────────────────────────────────────────
   # Runs after both parallel stages. Succeeds as long as Terraform applied
