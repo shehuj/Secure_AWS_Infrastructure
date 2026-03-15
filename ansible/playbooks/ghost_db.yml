@@ -28,14 +28,14 @@
 
   tasks:
     - name: Find a running ASG web server instance
-      ansible.builtin.shell: >
-        aws ec2 describe-instances
-        --region {{ aws_region }}
-        --filters
-          "Name=tag:Environment,Values={{ environment }}"
-          "Name=instance-state-name,Values=running"
-        --query 'Reservations[0].Instances[0].InstanceId'
-        --output text
+      ansible.builtin.shell: |
+        aws ec2 describe-instances \
+          --region {{ aws_region }} \
+          --filters \
+            "Name=tag:Environment,Values={{ environment }}" \
+            "Name=instance-state-name,Values=running" \
+          --query 'Reservations[0].Instances[0].InstanceId' \
+          --output text
       register: ec2_instance
       changed_when: false
       failed_when: ec2_instance.stdout == "" or ec2_instance.stdout == "None"
