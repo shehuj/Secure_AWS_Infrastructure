@@ -1,11 +1,13 @@
 name: CI
 
 on:
+  push:
+    branches: [dev]
   pull_request:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.head_ref }}
+  group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -83,7 +85,7 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-pr-${{ github.event.pull_request.number }}
+          name: tfplan-${{ github.event.pull_request.number || github.run_id }}
           path: terraform/plan.txt
           retention-days: 3
 
@@ -99,8 +101,8 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.pull_request.base.sha }}
-          head: ${{ github.event.pull_request.head.sha }}
+          base: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event.pull_request.head.sha || github.event.after }}
           extra_args: --only-verified
 
       - name: Terraform security (Checkov)
@@ -136,17 +138,17 @@ jobs:
           cd ansible
           ansible-lint playbooks/*.yml --profile min || true
 
-  # ── PR Comment ───────────────────────────────────────────────────────────────
+  # ── PR Comment (pull_request events only) ────────────────────────────────────
   pr-comment:
     name: PR Summary
     runs-on: ubuntu-latest
     needs: [terraform-validate, terraform-plan, ansible-lint, security-check]
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     steps:
       - name: Download plan output
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-pr-${{ github.event.pull_request.number }}
+          name: tfplan-${{ github.event.pull_request.number || github.run_id }}
         continue-on-error: true
 
       - name: Post PR comment
