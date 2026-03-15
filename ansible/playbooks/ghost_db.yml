@@ -49,7 +49,7 @@
         --output text
       register: ssm_ping
       changed_when: false
-      retries: 6
+      retries: 24
       delay: 10
       until: ssm_ping.stdout == "Online"
       failed_when: ssm_ping.stdout != "Online"

@@ -113,6 +113,14 @@ jobs:
             --region ${{ env.AWS_REGION }}
           echo "RDS is available."
 
+      # Give EC2 instances time to finish user_data (yum update + installs)
+      # and register with SSM. AL2023 user_data takes ~3-5 min; SSM agent
+      # is pre-installed and starts in parallel, but registration takes time.
+      - name: Wait for EC2 instances to finish booting
+        run: |
+          echo "Waiting 90s for EC2 instances to complete user_data and register with SSM..."
+          sleep 90
+
       - name: Run ghost_db.yml
         run: |
           cd ansible
