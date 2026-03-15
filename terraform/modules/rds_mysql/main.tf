@@ -78,7 +78,7 @@ resource "aws_secretsmanager_secret" "rds_password" {
 
   tags = merge(
     {
-      Name        = "${var.environment}-ghost-rds-master-password"
+      Name        = "${var.environment}-ghost-rds-master-psswd"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
@@ -104,7 +104,7 @@ resource "aws_secretsmanager_secret" "app_user_password" {
 
   tags = merge(
     {
-      Name        = "${var.environment}-ghost-rds-app-password"
+      Name        = "${var.environment}-ghost-rds-app-psswd"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
