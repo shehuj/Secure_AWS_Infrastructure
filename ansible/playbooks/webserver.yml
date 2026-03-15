@@ -15,7 +15,7 @@
 
   vars:
     aws_region: "us-east-1"
-    environment: "{{ app_environment | default('prod') }}"
+    deploy_env: "{{ app_environment | default('prod') }}"
     app_directory: /var/www/html
     nginx_port: 80
     company_name: "SecureCloud"
@@ -26,7 +26,7 @@
         aws ec2 describe-instances \
           --region {{ aws_region }} \
           --filters \
-            "Name=tag:Environment,Values={{ environment }}" \
+            "Name=tag:Environment,Values={{ deploy_env }}" \
             "Name=tag:Role,Values=web" \
             "Name=instance-state-name,Values=running" \
           --query 'Reservations[].Instances[].InstanceId' \
@@ -152,7 +152,7 @@
       vars:
         # Override CI runner gathered facts so the rendered page shows
         # correct environment values rather than runner-specific data.
-        ansible_hostname: "{{ environment }}-asg-webserver"
+        ansible_hostname: "{{ deploy_env }}-asg-webserver"
         ansible_default_ipv4:
           address: "10.0.x.x (assigned at boot)"
         ansible_ec2_instance_type: "t3.micro"
