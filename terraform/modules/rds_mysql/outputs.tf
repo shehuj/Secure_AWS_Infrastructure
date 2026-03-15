@@ -2,7 +2,7 @@
 
 output "db_instance_id" {
   description = "RDS instance identifier"
-  value       = aws_db_instance.ghost.id
+  value       = aws_db_instance.ghost.identifier
 }
 
 output "db_instance_arn" {

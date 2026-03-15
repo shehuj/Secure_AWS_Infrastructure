@@ -24,7 +24,7 @@
 
   vars:
     aws_region: "us-east-1"
-    environment: "{{ app_environment | default('prod') }}"
+    deploy_env: "{{ app_environment | default('prod') }}"
 
   tasks:
     - name: Find a running ASG web server instance
@@ -32,7 +32,7 @@
         aws ec2 describe-instances \
           --region {{ aws_region }} \
           --filters \
-            "Name=tag:Environment,Values={{ environment }}" \
+            "Name=tag:Environment,Values={{ deploy_env }}" \
             "Name=instance-state-name,Values=running" \
           --query 'Reservations[0].Instances[0].InstanceId' \
           --output text
@@ -69,12 +69,12 @@
               "set -euo pipefail",
               "which mysql 2>/dev/null || dnf install -y mariadb105 || yum install -y mariadb || apt-get install -y mysql-client || true",
               "which mysql 2>/dev/null || { echo 'ERROR: mysql client not available after install attempts'; exit 1; }",
-              "DB_HOST=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/host --query Parameter.Value --output text)",
-              "DB_NAME=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/name --query Parameter.Value --output text)",
-              "APP_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/app-user --query Parameter.Value --output text)",
-              "MASTER_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ environment }}/ghost/db/master-user --query Parameter.Value --output text)",
-              "MASTER_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ environment }}/ghost/rds/master-password --query SecretString --output text)",
-              "APP_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ environment }}/ghost/rds/app-password --query SecretString --output text)",
+              "DB_HOST=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ deploy_env }}/ghost/db/host --query Parameter.Value --output text)",
+              "DB_NAME=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ deploy_env }}/ghost/db/name --query Parameter.Value --output text)",
+              "APP_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ deploy_env }}/ghost/db/app-user --query Parameter.Value --output text)",
+              "MASTER_USER=$(aws ssm get-parameter --region {{ aws_region }} --name /{{ deploy_env }}/ghost/db/master-user --query Parameter.Value --output text)",
+              "MASTER_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ deploy_env }}/ghost/rds/master-password --query SecretString --output text)",
+              "APP_PASS=$(aws secretsmanager get-secret-value --region {{ aws_region }} --secret-id {{ deploy_env }}/ghost/rds/app-password --query SecretString --output text)",
               "echo 'Creating database...'",
               "mysql -h \"$DB_HOST\" -u \"$MASTER_USER\" -p\"$MASTER_PASS\" -e \"CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\"",
               "echo 'Creating app user...'",
