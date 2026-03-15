@@ -225,6 +225,33 @@ jobs:
           done
           echo "✅ ECS tasks stopped — DB connections cleared"
 
+      - name: Restore Secrets Manager secrets stuck in deletion state
+        run: |
+          echo "==> Checking Secrets Manager secrets for stuck deletion state..."
+          ENV="${{ github.event.inputs.environment }}"
+
+          # If a previous partial destroy left secrets in DeletionScheduled state,
+          # Terraform can't force-delete them again. Restore first so Terraform
+          # can run ForceDeleteWithoutRecovery cleanly.
+          for SECRET_NAME in "${ENV}/ghost/rds/master-password" "${ENV}/ghost/rds/app-password"; do
+            DELETED=$(aws secretsmanager describe-secret \
+              --secret-id "$SECRET_NAME" \
+              --query 'DeletedDate' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$DELETED" = "NOT_FOUND" ]; then
+              echo "  $SECRET_NAME: not found (will be skipped by Terraform)"
+            elif [ "$DELETED" != "None" ]; then
+              echo "  $SECRET_NAME: scheduled for deletion — restoring for clean Terraform destroy"
+              aws secretsmanager restore-secret \
+                --secret-id "$SECRET_NAME" \
+                --no-cli-pager 2>/dev/null || echo "  Warning: could not restore $SECRET_NAME"
+            else
+              echo "  $SECRET_NAME: active (normal state)"
+            fi
+          done
+          echo "✅ Secrets Manager state check complete"
+
       - name: Disable RDS deletion protection
         run: |
           echo "==> Disabling RDS deletion protection..."

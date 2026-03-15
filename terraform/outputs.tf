@@ -40,6 +40,12 @@ output "launch_template_id" {
   value       = module.alb_asg.launch_template_id
 }
 
+# RDS Outputs
+output "rds_identifier" {
+  description = "RDS instance identifier for the Ghost database"
+  value       = module.ghost_db.db_instance_id
+}
+
 # Ghost Blog Outputs
 output "ghost_alb_dns_name" {
   description = "DNS name of the Ghost blog Application Load Balancer"
