@@ -9,13 +9,18 @@ const menuToggle = document.getElementById('menu-toggle');
 if (menuToggle) {
     menuToggle.addEventListener('click', () => {
         const open = navMenu.classList.toggle('active');
+        menuToggle.classList.toggle('open', open);
         menuToggle.setAttribute('aria-expanded', open);
     });
 }
 
 // Close menu on nav link click
 document.querySelectorAll('.nav-link').forEach(link => {
-    link.addEventListener('click', () => navMenu.classList.remove('active'));
+    link.addEventListener('click', () => {
+        navMenu.classList.remove('active');
+        menuToggle?.classList.remove('open');
+        menuToggle?.setAttribute('aria-expanded', 'false');
+    });
 });
 
 // ── Smooth scroll ─────────────────────────────────────────────────────────────
@@ -80,6 +85,38 @@ if (deployEl) {
         mins  > 0 ? `${mins}m ago` : 'Just now';
 }
 
+// ── Number counter animation ──────────────────────────────────────────────────
+function animateCounter(el) {
+    const target = parseFloat(el.dataset.target);
+    const suffix = el.dataset.suffix || '';
+    const duration = 1800;
+    const steps = 60;
+    const increment = target / steps;
+    let current = 0;
+    let step = 0;
+
+    const timer = setInterval(() => {
+        step++;
+        current = Math.min(increment * step, target);
+        const display = Number.isInteger(target) ? Math.round(current) : current.toFixed(1);
+        el.textContent = display + suffix;
+        if (step >= steps) clearInterval(timer);
+    }, duration / steps);
+}
+
+// Trigger counter when element becomes visible
+const counterObserver = new IntersectionObserver(
+    entries => entries.forEach(e => {
+        if (e.isIntersecting && e.target.dataset.target) {
+            animateCounter(e.target);
+            counterObserver.unobserve(e.target);
+        }
+    }),
+    { threshold: 0.5 }
+);
+
+document.querySelectorAll('[data-target]').forEach(el => counterObserver.observe(el));
+
 // ── Live system metrics (simulated) ──────────────────────────────────────────
 function updateProgress(id, value) {
     const fill = document.getElementById(`${id}-progress`);
@@ -102,10 +139,10 @@ if (document.getElementById('cpu-value')) {
     setInterval(tick, 5000);
 }
 
-// ── Copy info values on click ─────────────────────────────────────────────────
-document.querySelectorAll('.info-value').forEach(el => {
+// ── Copy on click (.copyable and .info-value) ─────────────────────────────────
+document.querySelectorAll('.copyable, .info-value').forEach(el => {
     el.style.cursor = 'pointer';
-    el.title = 'Click to copy';
+    if (!el.title) el.title = 'Click to copy';
     el.addEventListener('click', async () => {
         const original = el.textContent;
         try {
@@ -141,7 +178,11 @@ async function checkHealth() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.key === 'Escape') navMenu.classList.remove('active');
+    if (e.key === 'Escape') {
+        navMenu.classList.remove('active');
+        menuToggle?.classList.remove('open');
+        menuToggle?.setAttribute('aria-expanded', 'false');
+    }
     if (e.key === 'h' || e.key === 'H') window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
