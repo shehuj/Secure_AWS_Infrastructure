@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
@@ -28,7 +28,7 @@
                 <li><a href="#status"         class="nav-link">Status</a></li>
                 <li><a href="/docs"           class="nav-link nav-cta">Docs</a></li>
             </ul>
-            <button class="mobile-menu-toggle" id="menu-toggle" aria-label="Toggle menu">
+            <button class="mobile-menu-toggle" id="menu-toggle" aria-label="Toggle menu" aria-expanded="false">
                 <span></span><span></span><span></span>
             </button>
         </div>
@@ -42,52 +42,133 @@
         <div class="hero-grid"></div>
 
         <div class="container">
-            <div class="hero-content">
-                <div class="hero-badge">
-                    <span class="status-dot status-success"></span>
-                    All Systems Operational
-                </div>
-                <span class="hero-eyebrow">Secure · Scalable · Always-On</span>
-                <h1 class="hero-title">
-                    Enterprise Cloud<br>
-                    <span class="highlight">Infrastructure</span>
-                </h1>
-                <p class="hero-description">
-                    Production-grade AWS infrastructure built with Terraform and Ansible.
-                    Multi-AZ, auto-scaling, and fully observable from day one.
-                </p>
-                <div class="hero-actions">
-                    <a href="#infrastructure" class="btn btn-primary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                            <polyline points="6 9 12 15 18 9"/>
-                        </svg>
-                        View Infrastructure
-                    </a>
-                    <a href="/docs" class="btn btn-secondary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                        </svg>
-                        Documentation
-                    </a>
-                </div>
-                <div class="hero-stats">
-                    <div class="stat-item">
-                        <div class="stat-value" data-count="99.9" data-suffix="%">99.9%</div>
-                        <div class="stat-label">Uptime SLA</div>
+            <div class="hero-layout">
+
+                <!-- Left: copy + CTAs + stats -->
+                <div class="hero-content">
+                    <div class="hero-badge">
+                        <span class="status-dot status-success"></span>
+                        All Systems Operational
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-value">&lt;50ms</div>
-                        <div class="stat-label">P99 Latency</div>
+                    <span class="hero-eyebrow">Secure · Scalable · Always-On</span>
+                    <h1 class="hero-title">
+                        Enterprise Cloud<br>
+                        <span class="highlight" id="typed-word">Infrastructure</span>
+                    </h1>
+                    <p class="hero-description">
+                        Production-grade AWS infrastructure built with Terraform and Ansible.
+                        Multi-AZ, auto-scaling, and fully observable from day one.
+                    </p>
+                    <div class="hero-actions">
+                        <a href="#infrastructure" class="btn btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                            View Infrastructure
+                        </a>
+                        <a href="/docs" class="btn btn-secondary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            Documentation
+                        </a>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-value">24/7</div>
-                        <div class="stat-label">Monitoring</div>
+                    <div class="hero-stats">
+                        <div class="stat-item">
+                            <div class="stat-value" data-target="99.9" data-suffix="%">0%</div>
+                            <div class="stat-label">Uptime SLA</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">&lt;50ms</div>
+                            <div class="stat-label">P99 Latency</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" data-target="24" data-suffix="/7">0/7</div>
+                            <div class="stat-label">Monitoring</div>
+                        </div>
                     </div>
                 </div>
+
+                <!-- Right: animated terminal card -->
+                <div class="hero-terminal" aria-hidden="true">
+                    <div class="terminal-header">
+                        <span class="terminal-dot dot-red"></span>
+                        <span class="terminal-dot dot-yellow"></span>
+                        <span class="terminal-dot dot-green"></span>
+                        <span class="terminal-title">deploy.sh</span>
+                    </div>
+                    <div class="terminal-body" id="terminal-body">
+                        <div class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">terraform apply</span></div>
+                        <div class="t-line t-out">Plan: 47 to add, 0 to change, 0 to destroy</div>
+                        <div class="t-line t-out t-fade" style="--td:.4s"><span class="t-green">✓</span> aws_vpc.main created</div>
+                        <div class="t-line t-out t-fade" style="--td:.7s"><span class="t-green">✓</span> aws_ecs_cluster.ghost created</div>
+                        <div class="t-line t-out t-fade" style="--td:1s"><span class="t-green">✓</span> aws_db_instance.ghost created</div>
+                        <div class="t-line t-out t-fade" style="--td:1.3s"><span class="t-green">✓</span> aws_lb.main created</div>
+                        <div class="t-line t-out t-fade t-bold" style="--td:1.6s">Apply complete! Resources: 47 added.</div>
+                        <div class="t-line t-fade" style="--td:2s"><span class="t-prompt">$</span> <span class="t-cmd">ansible-playbook ghost_db.yml</span></div>
+                        <div class="t-line t-out t-fade" style="--td:2.4s"><span class="t-green">ok</span> ghost_app user created</div>
+                        <div class="t-line t-out t-fade" style="--td:2.7s"><span class="t-green">ok</span> database privileges granted</div>
+                        <div class="t-divider t-fade" style="--td:3s"></div>
+                        <div class="t-services t-fade" style="--td:3.2s">
+                            <div class="t-svc"><span class="t-dot-green"></span><span class="t-svc-name">ghost</span><span class="t-svc-ok">healthy</span></div>
+                            <div class="t-svc"><span class="t-dot-green"></span><span class="t-svc-name">nginx</span><span class="t-svc-ok">running</span></div>
+                            <div class="t-svc"><span class="t-dot-green"></span><span class="t-svc-name">rds</span><span class="t-svc-ok">available</span></div>
+                            <div class="t-svc"><span class="t-dot-green"></span><span class="t-svc-name">alb</span><span class="t-svc-ok">active</span></div>
+                        </div>
+                        <div class="t-line t-cursor t-fade" style="--td:3.5s"><span class="t-prompt">$</span><span class="cursor-blink">▋</span></div>
+                    </div>
+                    <div class="terminal-glow"></div>
+                </div>
+
+            </div><!-- /.hero-layout -->
+
+            <!-- Scroll indicator -->
+            <div class="scroll-indicator" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
         </div>
     </section>
+
+    <!-- Tech stack ticker -->
+    <div class="ticker-wrap" aria-hidden="true">
+        <div class="ticker-track">
+            <div class="ticker-list">
+                <span>AWS</span><span class="sep">·</span>
+                <span>Terraform</span><span class="sep">·</span>
+                <span>Ansible</span><span class="sep">·</span>
+                <span>Ghost CMS</span><span class="sep">·</span>
+                <span>ECS Fargate</span><span class="sep">·</span>
+                <span>RDS MySQL</span><span class="sep">·</span>
+                <span>GitHub Actions</span><span class="sep">·</span>
+                <span>CloudWatch</span><span class="sep">·</span>
+                <span>Grafana</span><span class="sep">·</span>
+                <span>Prometheus</span><span class="sep">·</span>
+                <span>Application Load Balancer</span><span class="sep">·</span>
+                <span>Auto Scaling</span><span class="sep">·</span>
+                <span>VPC</span><span class="sep">·</span>
+                <span>Route 53</span><span class="sep">·</span>
+                <span>ACM</span><span class="sep">·</span>
+                <span>Secrets Manager</span><span class="sep">·</span>
+                <span>Systems Manager</span><span class="sep">·</span>
+            </div>
+            <!-- duplicate for seamless loop -->
+            <div class="ticker-list" aria-hidden="true">
+                <span>AWS</span><span class="sep">·</span>
+                <span>Terraform</span><span class="sep">·</span>
+                <span>Ansible</span><span class="sep">·</span>
+                <span>Ghost CMS</span><span class="sep">·</span>
+                <span>ECS Fargate</span><span class="sep">·</span>
+                <span>RDS MySQL</span><span class="sep">·</span>
+                <span>GitHub Actions</span><span class="sep">·</span>
+                <span>CloudWatch</span><span class="sep">·</span>
+                <span>Grafana</span><span class="sep">·</span>
+                <span>Prometheus</span><span class="sep">·</span>
+                <span>Application Load Balancer</span><span class="sep">·</span>
+                <span>Auto Scaling</span><span class="sep">·</span>
+                <span>VPC</span><span class="sep">·</span>
+                <span>Route 53</span><span class="sep">·</span>
+                <span>ACM</span><span class="sep">·</span>
+                <span>Secrets Manager</span><span class="sep">·</span>
+                <span>Systems Manager</span><span class="sep">·</span>
+            </div>
+        </div>
+    </div>
 
     <!-- Features -->
     <section id="features" class="features">
@@ -98,57 +179,44 @@
                 <p>Every layer hardened with security, observability, and resilience from the ground up</p>
             </div>
             <div class="features-grid">
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:0">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     </div>
                     <h3>Security First</h3>
                     <p>VPC isolation, TLS everywhere, automated scanning with Checkov and TruffleHog on every PR.</p>
                 </div>
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:1">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                     </div>
                     <h3>Infrastructure as Code</h3>
                     <p>Fully reproducible deployments via Terraform + Ansible. Version controlled, peer-reviewed, automated.</p>
                 </div>
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:2">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                     </div>
                     <h3>Auto Scaling</h3>
                     <p>ALB + ASG dynamically matches capacity to demand. Scale out in seconds, scale in gracefully.</p>
                 </div>
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:3">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                     </div>
                     <h3>Full Observability</h3>
                     <p>CloudWatch dashboards, Prometheus metrics, Grafana visualisations, and SNS alerting built in.</p>
                 </div>
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:4">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                     </div>
                     <h3>Multi-AZ Resilience</h3>
                     <p>Resources distributed across availability zones. RDS Multi-AZ. ECS tasks spread via Fargate.</p>
                 </div>
-                <div class="feature-card fade-in">
+                <div class="feature-card fade-in" style="--i:5">
                     <div class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <circle cx="12" cy="12" r="3"/>
-                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
                     </div>
                     <h3>CI/CD Pipeline</h3>
                     <p>GitHub Actions: validate, plan, and apply on merge. Zero-touch deployments with health gate checks.</p>
@@ -167,15 +235,15 @@
             </div>
 
             <div class="info-grid">
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:0">
                     <div class="info-label">Server Hostname</div>
-                    <div class="info-value">{{ ansible_hostname }}</div>
+                    <div class="info-value copyable" title="Click to copy">{{ ansible_hostname }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:1">
                     <div class="info-label">Private IP</div>
-                    <div class="info-value">{{ ansible_default_ipv4.address }}</div>
+                    <div class="info-value copyable" title="Click to copy">{{ ansible_default_ipv4.address }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:2">
                     <div class="info-label">Environment</div>
                     <div class="info-value">
                         <span class="badge badge-{{ deploy_env | default('production') }}">
@@ -183,63 +251,57 @@
                         </span>
                     </div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:3">
                     <div class="info-label">Region</div>
-                    <div class="info-value">{{ aws_region | default('us-east-1') }}</div>
+                    <div class="info-value copyable" title="Click to copy">{{ aws_region | default('us-east-1') }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:4">
                     <div class="info-label">Instance Type</div>
                     <div class="info-value">{{ ansible_ec2_instance_type | default('t3.micro') }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:5">
                     <div class="info-label">OS</div>
                     <div class="info-value">{{ ansible_distribution }} {{ ansible_distribution_version }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:6">
                     <div class="info-label">Kernel</div>
                     <div class="info-value">{{ ansible_kernel }}</div>
                 </div>
-                <div class="info-card fade-in">
+                <div class="info-card fade-in" style="--i:7">
                     <div class="info-label">Last Deployed</div>
                     <div class="info-value" id="deploy-time">{{ ansible_date_time.iso8601 }}</div>
                 </div>
             </div>
 
-            <!-- System Metrics -->
+            <!-- Metrics -->
             <div class="metrics-section fade-in">
                 <div class="metrics-title">
                     <span class="metrics-title-dot"></span>
                     Live System Metrics
                 </div>
                 <div class="metrics-grid">
-                    <div class="metric-card">
+                    <div class="metric-card" style="--i:0">
                         <div class="metric-header">
                             <span class="metric-label">CPU Usage</span>
                             <span id="cpu-value" class="metric-value">—</span>
                         </div>
-                        <div class="progress-bar">
-                            <div id="cpu-progress" class="progress-fill" style="width:0%"></div>
-                        </div>
+                        <div class="progress-bar"><div id="cpu-progress" class="progress-fill" style="width:0%"></div></div>
                     </div>
-                    <div class="metric-card">
+                    <div class="metric-card" style="--i:1">
                         <div class="metric-header">
                             <span class="metric-label">Memory Usage</span>
                             <span id="memory-value" class="metric-value">—</span>
                         </div>
-                        <div class="progress-bar">
-                            <div id="memory-progress" class="progress-fill" style="width:0%"></div>
-                        </div>
+                        <div class="progress-bar"><div id="memory-progress" class="progress-fill" style="width:0%"></div></div>
                     </div>
-                    <div class="metric-card">
+                    <div class="metric-card" style="--i:2">
                         <div class="metric-header">
                             <span class="metric-label">Disk Usage</span>
                             <span id="disk-value" class="metric-value">—</span>
                         </div>
-                        <div class="progress-bar">
-                            <div id="disk-progress" class="progress-fill" style="width:0%"></div>
-                        </div>
+                        <div class="progress-bar"><div id="disk-progress" class="progress-fill" style="width:0%"></div></div>
                     </div>
-                    <div class="metric-card">
+                    <div class="metric-card" style="--i:3">
                         <div class="metric-header">
                             <span class="metric-label">Network</span>
                             <span id="network-value" class="metric-value">Active</span>
@@ -263,7 +325,7 @@
                 <p>Real-time service health across all infrastructure components</p>
             </div>
             <div class="status-grid">
-                <div class="status-card fade-in">
+                <div class="status-card fade-in" style="--i:0">
                     <div class="status-icon-wrap ok">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
                     </div>
@@ -273,7 +335,7 @@
                     </div>
                     <span class="status-badge ok">Operational</span>
                 </div>
-                <div class="status-card fade-in">
+                <div class="status-card fade-in" style="--i:1">
                     <div class="status-icon-wrap ok">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
                     </div>
@@ -283,7 +345,7 @@
                     </div>
                     <span class="status-badge ok">Operational</span>
                 </div>
-                <div class="status-card fade-in">
+                <div class="status-card fade-in" style="--i:2">
                     <div class="status-icon-wrap ok">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
                     </div>
@@ -293,7 +355,7 @@
                     </div>
                     <span class="status-badge ok">Operational</span>
                 </div>
-                <div class="status-card fade-in">
+                <div class="status-card fade-in" style="--i:3">
                     <div class="status-icon-wrap ok">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
                     </div>
@@ -311,11 +373,9 @@
     <footer class="footer">
         <div class="container">
             <div class="footer-content">
-                <div class="footer-section">
+                <div class="footer-section footer-brand-section">
                     <div class="footer-brand">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                        </svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
                         {{ company_name | default('ClaudiQ') }}
                     </div>
                     <p>Enterprise-grade cloud infrastructure built on AWS, delivered through Terraform and Ansible.</p>
