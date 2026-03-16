@@ -944,6 +944,10 @@ section { padding: 6rem 0; }
         margin-left: auto;
         margin-right: auto;
     }
+}
+
+@media (max-width: 768px) {
+    .container { padding: 0 1rem; }
 
     .hero-actions { justify-content: center; }
 
