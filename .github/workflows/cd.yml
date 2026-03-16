@@ -192,10 +192,50 @@ jobs:
         run: |
           CLUSTER="${{ needs.terraform-apply.outputs.ecs_cluster_name }}"
           SERVICE="${{ needs.terraform-apply.outputs.ecs_service_name }}"
-          aws ecs wait services-stable \
-            --cluster "${CLUSTER}" \
-            --services "${SERVICE}" \
-            --region ${{ env.AWS_REGION }}
+          REGION="${{ env.AWS_REGION }}"
+          MAX_WAIT=900   # 15 minutes — EFS mount + DB migration can exceed 10 min default
+          SLEEP=20
+          ELAPSED=0
+
+          echo "Waiting up to ${MAX_WAIT}s for ${CLUSTER}/${SERVICE} to stabilise..."
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            INFO=$(aws ecs describe-services \
+              --cluster "$CLUSTER" --services "$SERVICE" \
+              --region "$REGION" \
+              --query 'services[0].{running:runningCount,desired:desiredCount,pending:pendingCount,status:status}' \
+              --output json)
+            RUNNING=$(echo "$INFO" | jq -r '.running')
+            DESIRED=$(echo "$INFO" | jq -r '.desired')
+            PENDING=$(echo "$INFO" | jq -r '.pending')
+            echo "[${ELAPSED}s/${MAX_WAIT}s] running=${RUNNING}/${DESIRED} pending=${PENDING}"
+
+            if [ "$RUNNING" = "$DESIRED" ] && [ "$PENDING" = "0" ] && [ "$RUNNING" != "0" ]; then
+              echo "Service stable."
+              exit 0
+            fi
+
+            sleep $SLEEP
+            ELAPSED=$((ELAPSED + SLEEP))
+          done
+
+          echo "ERROR: Service did not stabilise after ${MAX_WAIT}s. Recent events:"
+          aws ecs describe-services \
+            --cluster "$CLUSTER" --services "$SERVICE" \
+            --region "$REGION" \
+            --query 'services[0].events[:10]' \
+            --output table
+          echo "Stopped tasks (last 5):"
+          aws ecs list-tasks \
+            --cluster "$CLUSTER" --desired-status STOPPED \
+            --region "$REGION" \
+            --query 'taskArns[:5]' \
+            --output text | tr '\t' '\n' | while read ARN; do
+              [ -z "$ARN" ] && continue
+              aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$ARN" --region "$REGION" \
+                --query 'tasks[0].{status:lastStatus,reason:stoppedReason,containers:containers[*].{name:name,reason:reason,exitCode:exitCode}}' \
+                --output json
+            done
+          exit 1
 
       - name: Health check
         run: |
