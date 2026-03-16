@@ -12,6 +12,7 @@ root_volume_size = 30
 # DO NOT commit secrets to this file
 
 enable_observability = true
+ghost_domain_name    = "claudiq.com"
 grafana_domain_name  = "grafana.claudiq.com"
 
 # IMPORTANT: Set these via environment variables or GitHub Secrets:
