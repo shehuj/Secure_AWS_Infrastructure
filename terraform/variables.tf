@@ -149,9 +149,14 @@ variable "acm_certificate_arn" {
 }
 
 variable "ghost_domain_name" {
-  description = "Domain name for Ghost blog (e.g., blog.example.com). Must be provided via terraform.tfvars."
+  description = "Domain name for Ghost blog (e.g., blog.example.com). Must be provided via terraform.tfvars or TF_VAR_ghost_domain_name."
   type        = string
   default     = "" # No default - must be explicitly set for your domain
+
+  validation {
+    condition     = var.ghost_domain_name != "" && can(regex("^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+$", var.ghost_domain_name))
+    error_message = "ghost_domain_name must be a non-empty valid domain (e.g., blog.example.com). Set TF_VAR_ghost_domain_name or add it to terraform.tfvars."
+  }
 }
 
 variable "ghost_image" {

@@ -30,6 +30,7 @@ env:
   TF_VAR_route53_zone_id: ${{ secrets.TF_VAR_ROUTE53_ZONE_ID }}
   TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
   TF_VAR_grafana_certificate_arn: ${{ secrets.TF_VAR_GRAFANA_CERTIFICATE_ARN }}
+  TF_VAR_ghost_domain_name: ${{ secrets.TF_VAR_GHOST_DOMAIN_NAME }}
   TF_VAR_grafana_domain_name: ${{ secrets.TF_VAR_GRAFANA_DOMAIN_NAME }}
   TF_VAR_grafana_admin_password: ${{ secrets.TF_VAR_GRAFANA_ADMIN_PASSWORD }}
   TF_VAR_root_volume_size: ${{ secrets.TF_VAR_ROOT_VOLUME_SIZE }}
