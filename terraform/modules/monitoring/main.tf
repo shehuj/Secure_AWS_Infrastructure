@@ -10,20 +10,6 @@ terraform {
 }
 
 
-# Import pre-existing log groups so Terraform doesn't fail with
-# ResourceAlreadyExistsException when they were created outside of state
-# (e.g. by a prior deploy or manual creation). Safe to leave permanently —
-# Terraform silently skips the import if the resource is already in state.
-import {
-  to = aws_cloudwatch_log_group.nginx_access
-  id = "/aws/ec2/${var.environment}/nginx/access"
-}
-
-import {
-  to = aws_cloudwatch_log_group.nginx_error
-  id = "/aws/ec2/${var.environment}/nginx/error"
-}
-
 # CloudWatch Log Groups
 resource "aws_cloudwatch_log_group" "nginx_access" {
   name              = "/aws/ec2/${var.environment}/nginx/access"
