@@ -1,8 +1,8 @@
 // ClaudiQ — Frontend Application
 // ================================
 
-const navbar    = document.getElementById('navbar');
-const navMenu   = document.getElementById('nav-menu');
+const navbar     = document.getElementById('navbar');
+const navMenu    = document.getElementById('nav-menu');
 const menuToggle = document.getElementById('menu-toggle');
 
 // ── Mobile menu ──────────────────────────────────────────────────────────────
@@ -33,20 +33,35 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
     });
 });
 
-// ── Navbar scroll class + active link ────────────────────────────────────────
-const sections  = document.querySelectorAll('section[id]');
-const navLinks  = document.querySelectorAll('.nav-link[href^="#"]');
+// ── Inject scroll progress bar ────────────────────────────────────────────────
+const scrollProgress = document.createElement('div');
+scrollProgress.className = 'scroll-progress';
+document.body.prepend(scrollProgress);
 
-window.addEventListener('scroll', () => {
+// ── Inject back-to-top button ─────────────────────────────────────────────────
+const backToTop = document.createElement('button');
+backToTop.className = 'back-to-top';
+backToTop.setAttribute('aria-label', 'Back to top');
+backToTop.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`;
+document.body.appendChild(backToTop);
+
+backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+// ── Navbar scroll class + active link (rAF-throttled) ────────────────────────
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('.nav-link[href^="#"]');
+
+let scrollTicking = false;
+
+function handleScroll() {
     const y = window.scrollY;
 
-    // Scrolled class
     navbar.classList.toggle('scrolled', y > 50);
 
-    // Active link
+    // Active nav link
     sections.forEach(section => {
-        const top  = section.offsetTop - 120;
-        const bot  = top + section.offsetHeight;
+        const top = section.offsetTop - 120;
+        const bot = top + section.offsetHeight;
         if (y >= top && y < bot) {
             const id = section.id;
             navLinks.forEach(l => {
@@ -54,6 +69,22 @@ window.addEventListener('scroll', () => {
             });
         }
     });
+
+    // Scroll progress bar
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    scrollProgress.style.width = docHeight > 0 ? `${(y / docHeight) * 100}%` : '0%';
+
+    // Back to top visibility
+    backToTop.classList.toggle('visible', y > 400);
+
+    scrollTicking = false;
+}
+
+window.addEventListener('scroll', () => {
+    if (!scrollTicking) {
+        requestAnimationFrame(handleScroll);
+        scrollTicking = true;
+    }
 }, { passive: true });
 
 // ── Fade-in via IntersectionObserver ─────────────────────────────────────────
@@ -68,6 +99,11 @@ const fadeObserver = new IntersectionObserver(
 );
 
 document.querySelectorAll('.fade-in').forEach(el => fadeObserver.observe(el));
+
+// Assign stagger index to grid children so fade-in delays cascade
+document.querySelectorAll('.features-grid, .info-grid, .metrics-grid, .status-grid').forEach(grid => {
+    grid.querySelectorAll('.fade-in').forEach((el, i) => el.style.setProperty('--i', i));
+});
 
 // ── Deploy time formatting ────────────────────────────────────────────────────
 const deployEl = document.getElementById('deploy-time');
@@ -85,26 +121,24 @@ if (deployEl) {
         mins  > 0 ? `${mins}m ago` : 'Just now';
 }
 
-// ── Number counter animation ──────────────────────────────────────────────────
+// ── Number counter animation (ease-out quart) ─────────────────────────────────
 function animateCounter(el) {
-    const target = parseFloat(el.dataset.target);
-    const suffix = el.dataset.suffix || '';
+    const target   = parseFloat(el.dataset.target);
+    const suffix   = el.dataset.suffix || '';
     const duration = 1800;
-    const steps = 60;
-    const increment = target / steps;
-    let current = 0;
-    let step = 0;
+    const start    = performance.now();
 
-    const timer = setInterval(() => {
-        step++;
-        current = Math.min(increment * step, target);
-        const display = Number.isInteger(target) ? Math.round(current) : current.toFixed(1);
-        el.textContent = display + suffix;
-        if (step >= steps) clearInterval(timer);
-    }, duration / steps);
+    function step(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased    = 1 - Math.pow(1 - progress, 4);
+        const current  = target * eased;
+        el.textContent = (Number.isInteger(target) ? Math.round(current) : current.toFixed(1)) + suffix;
+        if (progress < 1) requestAnimationFrame(step);
+    }
+
+    requestAnimationFrame(step);
 }
 
-// Trigger counter when element becomes visible
 const counterObserver = new IntersectionObserver(
     entries => entries.forEach(e => {
         if (e.isIntersecting && e.target.dataset.target) {
@@ -157,6 +191,19 @@ document.querySelectorAll('.copyable, .info-value').forEach(el => {
     });
 });
 
+// ── Button ripple ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+        const ripple = document.createElement('span');
+        ripple.className = 'ripple';
+        const rect = btn.getBoundingClientRect();
+        ripple.style.left = `${e.clientX - rect.left - 4}px`;
+        ripple.style.top  = `${e.clientY - rect.top  - 4}px`;
+        btn.appendChild(ripple);
+        ripple.addEventListener('animationend', () => ripple.remove());
+    });
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 async function checkHealth() {
     try {
@@ -165,15 +212,22 @@ async function checkHealth() {
     } catch { return false; }
 }
 
-(async () => {
-    const healthy = await checkHealth();
-    if (!healthy) {
-        document.querySelectorAll('.status-badge.ok').forEach(b => {
+function applyHealthStatus(healthy) {
+    document.querySelectorAll('.status-badge').forEach(b => {
+        if (healthy) {
+            if (b.classList.contains('warn') && b.textContent.trim() === 'Checking') {
+                b.className = 'status-badge ok';
+                b.textContent = 'Operational';
+            }
+        } else {
             b.className = 'status-badge warn';
             b.textContent = 'Checking';
-        });
-    }
-})();
+        }
+    });
+}
+
+(async () => applyHealthStatus(await checkHealth()))();
+setInterval(async () => applyHealthStatus(await checkHealth()), 30000);
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
