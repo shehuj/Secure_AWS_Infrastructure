@@ -59,12 +59,17 @@
       loop: "{{ instance_ids }}"
 
     # ── Build file payloads ───────────────────────────────────────────────────
+    # Files are gzip-compressed before base64-encoding to stay under the
+    # AWS SSM send-command 97 KB parameter limit (raw files total ~77 KB;
+    # base64-only encoding pushes the JSON to ~105 KB — over the limit).
+    # gzip typically reduces CSS/JS/HTML to ~20-30% of their original size,
+    # bringing the encoded payload well under 40 KB.
 
-    - name: Build nginx config (Jinja2 expands nginx_port and app_directory)
-      ansible.builtin.set_fact:
-        nginx_conf_b64: "{{ nginx_conf_content | b64encode }}"
-      vars:
-        nginx_conf_content: |
+    - name: Write nginx config to temp file
+      ansible.builtin.copy:
+        dest: /tmp/deploy_nginx.conf
+        mode: "0600"
+        content: |
           user nginx;
           worker_processes auto;
           error_log /var/log/nginx/error.log warn;
@@ -142,16 +147,13 @@
 
     # Templates are rendered here on the CI runner. gather_facts: true provides
     # ansible_date_time (deploy timestamp). EC2-specific facts are overridden
-    # below so the page shows meaningful values instead of CI runner facts.
-    - name: Encode static files and render templates
-      ansible.builtin.set_fact:
-        styles_css_b64: "{{ lookup('file', playbook_dir + '/../files/css/styles.css') | b64encode }}"
-        app_js_b64: "{{ lookup('file', playbook_dir + '/../files/js/app.js') | b64encode }}"
-        index_html_b64: "{{ lookup('template', playbook_dir + '/../templates/index.html.j2') | b64encode }}"
-        docs_html_b64: "{{ lookup('template', playbook_dir + '/../templates/docs.html.j2') | b64encode }}"
+    # so the page shows meaningful values instead of CI runner facts.
+    - name: Write rendered HTML templates to temp files
+      ansible.builtin.copy:
+        content: "{{ lookup('template', item.src) }}"
+        dest: "{{ item.dest }}"
+        mode: "0600"
       vars:
-        # Override CI runner gathered facts so the rendered page shows
-        # correct environment values rather than runner-specific data.
         ansible_hostname: "{{ deploy_env }}-asg-webserver"
         ansible_default_ipv4:
           address: "10.0.x.x (assigned at boot)"
@@ -159,6 +161,28 @@
         ansible_distribution: "Amazon Linux"
         ansible_distribution_version: "2023"
         ansible_kernel: "6.1 (Amazon Linux 2023)"
+      loop:
+        - { src: "{{ playbook_dir }}/../templates/index.html.j2", dest: /tmp/deploy_index.html }
+        - { src: "{{ playbook_dir }}/../templates/docs.html.j2",  dest: /tmp/deploy_docs.html  }
+
+    - name: Gzip-encode all deploy files
+      ansible.builtin.shell: gzip -c {{ item }} | base64 -w 0
+      register: gz_results
+      loop:
+        - /tmp/deploy_nginx.conf
+        - "{{ playbook_dir }}/../files/css/styles.css"
+        - "{{ playbook_dir }}/../files/js/app.js"
+        - /tmp/deploy_index.html
+        - /tmp/deploy_docs.html
+      changed_when: false
+
+    - name: Set gzip-encoded file facts
+      ansible.builtin.set_fact:
+        nginx_conf_gz_b64: "{{ gz_results.results[0].stdout }}"
+        styles_css_gz_b64: "{{ gz_results.results[1].stdout }}"
+        app_js_gz_b64:     "{{ gz_results.results[2].stdout }}"
+        index_html_gz_b64: "{{ gz_results.results[3].stdout }}"
+        docs_html_gz_b64:  "{{ gz_results.results[4].stdout }}"
 
     # ── Build and write SSM params JSON ──────────────────────────────────────
 
@@ -171,11 +195,11 @@
         deploy_commands:
           - "set -euo pipefail"
           - "mkdir -p {{ app_directory }}/static/css {{ app_directory }}/static/js {{ app_directory }}/static/images"
-          - "printf '%s' '{{ nginx_conf_b64 }}' | base64 -d > /etc/nginx/nginx.conf"
-          - "printf '%s' '{{ styles_css_b64 }}' | base64 -d > {{ app_directory }}/static/css/styles.css"
-          - "printf '%s' '{{ app_js_b64 }}' | base64 -d > {{ app_directory }}/static/js/app.js"
-          - "printf '%s' '{{ index_html_b64 }}' | base64 -d > {{ app_directory }}/index.html"
-          - "printf '%s' '{{ docs_html_b64 }}' | base64 -d > {{ app_directory }}/docs.html"
+          - "printf '%s' '{{ nginx_conf_gz_b64 }}'  | base64 -d | gunzip > /etc/nginx/nginx.conf"
+          - "printf '%s' '{{ styles_css_gz_b64 }}'  | base64 -d | gunzip > {{ app_directory }}/static/css/styles.css"
+          - "printf '%s' '{{ app_js_gz_b64 }}'      | base64 -d | gunzip > {{ app_directory }}/static/js/app.js"
+          - "printf '%s' '{{ index_html_gz_b64 }}'  | base64 -d | gunzip > {{ app_directory }}/index.html"
+          - "printf '%s' '{{ docs_html_gz_b64 }}'   | base64 -d | gunzip > {{ app_directory }}/docs.html"
           - "echo -n OK > {{ app_directory }}/health"
           - "chown -R nginx:nginx {{ app_directory }}"
           - "nginx -t"
@@ -255,7 +279,12 @@
       loop_control:
         index_var: idx
 
-    - name: Clean up temp file
+    - name: Clean up temp files
       ansible.builtin.file:
-        path: /tmp/webserver_params.json
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /tmp/webserver_params.json
+        - /tmp/deploy_nginx.conf
+        - /tmp/deploy_index.html
+        - /tmp/deploy_docs.html
