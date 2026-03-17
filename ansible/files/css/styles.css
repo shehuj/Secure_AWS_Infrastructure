@@ -1256,6 +1256,15 @@ section { padding: 6rem 0; }
 
 .copyable:hover { color: var(--primary); }
 
+/* ── Typed word cursor ── */
+.hero-cursor {
+    color: var(--primary);
+    animation: blink 1s step-end infinite;
+    font-weight: 300;
+    opacity: 0.8;
+    margin-left: 2px;
+}
+
 /* ── Focus visible ── */
 *:focus-visible {
     outline: 2px solid var(--primary);

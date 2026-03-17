@@ -240,6 +240,103 @@ document.addEventListener('keydown', e => {
     if (e.key === 'h' || e.key === 'H') window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
+// ── Typed word cycler (#typed-word on index page) ────────────────────────────
+const typedEl  = document.getElementById('typed-word');
+const typedCursor = document.querySelector('.hero-cursor');
+if (typedEl) {
+    const words = ['Infrastructure', 'Security', 'Scalability', 'Reliability', 'Automation'];
+    let wordIndex = 0;
+    let charIndex = 0;
+    let deleting  = false;
+
+    function typeStep() {
+        const current = words[wordIndex];
+        typedEl.textContent = deleting
+            ? current.slice(0, --charIndex)
+            : current.slice(0, ++charIndex);
+
+        let delay = deleting ? 55 : 95;
+        if (!deleting && charIndex === current.length) {
+            delay    = 2000;
+            deleting = true;
+        } else if (deleting && charIndex === 0) {
+            deleting  = false;
+            wordIndex = (wordIndex + 1) % words.length;
+            delay     = 300;
+        }
+        setTimeout(typeStep, delay);
+    }
+    // Hide built-in cursor while static, start after initial load pause
+    setTimeout(typeStep, 1600);
+}
+
+// ── Code block copy buttons (docs page) ───────────────────────────────────────
+document.querySelectorAll('.docs-pre-wrap').forEach(wrap => {
+    const btn = document.createElement('button');
+    btn.className   = 'code-copy-btn';
+    btn.textContent = 'Copy';
+    wrap.appendChild(btn);
+
+    btn.addEventListener('click', async () => {
+        const pre  = wrap.querySelector('pre');
+        const code = pre?.querySelector('code')?.textContent ?? pre?.textContent ?? '';
+        try {
+            await navigator.clipboard.writeText(code.trim());
+            btn.textContent = '✓ Copied';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+        } catch { /* clipboard unavailable */ }
+    });
+});
+
+// ── Docs sidebar: active link tracking + mobile toggle ────────────────────────
+const docsNavLinks = document.querySelectorAll('#docs-nav a[href^="#"]');
+if (docsNavLinks.length > 0) {
+    const docsSections = document.querySelectorAll('#docs-content section[id]');
+
+    function updateDocsNav() {
+        const y = window.scrollY + 130;
+        docsSections.forEach(section => {
+            const top = section.offsetTop;
+            const bot = top + section.offsetHeight;
+            if (y >= top && y < bot) {
+                docsNavLinks.forEach(l => {
+                    l.classList.toggle('active', l.getAttribute('href') === `#${section.id}`);
+                });
+            }
+        });
+    }
+
+    window.addEventListener('scroll', updateDocsNav, { passive: true });
+    updateDocsNav();
+}
+
+const sidebarToggle  = document.getElementById('sidebar-toggle');
+const sidebarNavBody = document.getElementById('sidebar-nav-body');
+const toggleIcon     = document.getElementById('toggle-icon');
+if (sidebarToggle && sidebarNavBody) {
+    // Collapse by default on narrow screens
+    if (window.innerWidth <= 900) {
+        sidebarNavBody.classList.add('hidden');
+        toggleIcon.textContent = '▾';
+        sidebarToggle.setAttribute('aria-expanded', 'false');
+    }
+    sidebarToggle.addEventListener('click', () => {
+        const isHidden = sidebarNavBody.classList.toggle('hidden');
+        toggleIcon.textContent = isHidden ? '▾' : '▴';
+        sidebarToggle.setAttribute('aria-expanded', String(!isHidden));
+    });
+    // Auto-close after a sidebar link click on mobile
+    docsNavLinks.forEach(l => {
+        l.addEventListener('click', () => {
+            if (window.innerWidth <= 900) {
+                sidebarNavBody.classList.add('hidden');
+                toggleIcon.textContent = '▾';
+                sidebarToggle.setAttribute('aria-expanded', 'false');
+            }
+        });
+    });
+}
+
 // ── Console banner ────────────────────────────────────────────────────────────
 console.log('%c⬡ ClaudiQ', 'color:#a3e635;font-size:22px;font-weight:800;');
 console.log('%cBuilt with Terraform & Ansible on AWS', 'color:#65a30d;font-size:13px;');
