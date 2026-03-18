@@ -35,6 +35,14 @@ resource "aws_security_group" "grafana_alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "Prometheus UI — restrict to trusted CIDRs"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = var.prometheus_allowed_cidrs
+  }
+
   egress {
     description = "All outbound traffic"
     from_port   = 0
@@ -68,11 +76,12 @@ resource "aws_security_group" "monitoring_tasks" {
   }
 
   ingress {
-    description = "Prometheus from Grafana"
-    from_port   = 9090
-    to_port     = 9090
-    protocol    = "tcp"
-    self        = true
+    description     = "Prometheus from Grafana (internal) and ALB"
+    from_port       = 9090
+    to_port         = 9090
+    protocol        = "tcp"
+    self            = true
+    security_groups = [aws_security_group.grafana_alb.id]
   }
 
   ingress {
@@ -673,6 +682,57 @@ resource "aws_lb_listener" "grafana_http" {
   )
 }
 
+# Target Group for Prometheus
+resource "aws_lb_target_group" "prometheus" {
+  name        = "${var.environment}-prometheus-tg"
+  port        = 9090
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/-/healthy"
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-prometheus-target-group"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# Prometheus listener on port 9090 (restricted by ALB security group CIDRs)
+resource "aws_lb_listener" "prometheus" {
+  load_balancer_arn = aws_lb.grafana.arn
+  port              = "9090"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.prometheus.arn
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-prometheus-alb-listener"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
 # ECS Service for Prometheus
 resource "aws_ecs_service" "prometheus" {
   name            = "${var.environment}-prometheus-service"
@@ -687,11 +747,20 @@ resource "aws_ecs_service" "prometheus" {
     assign_public_ip = true
   }
 
+  load_balancer {
+    target_group_arn = aws_lb_target_group.prometheus.arn
+    container_name   = "prometheus"
+    container_port   = 9090
+  }
+
   service_registries {
     registry_arn = aws_service_discovery_service.prometheus.arn
   }
 
+  health_check_grace_period_seconds = 60
+
   depends_on = [
+    aws_lb_listener.prometheus,
     aws_efs_mount_target.prometheus
   ]
 
