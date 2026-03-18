@@ -36,7 +36,7 @@ resource "aws_security_group" "grafana_alb" {
   }
 
   ingress {
-    description = "Prometheus UI — restrict to trusted CIDRs"
+    description = "Prometheus UI - restricted to trusted CIDRs"
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
