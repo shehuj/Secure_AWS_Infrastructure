@@ -52,6 +52,12 @@ variable "ghost_service_name" {
   type        = string
 }
 
+variable "prometheus_allowed_cidrs" {
+  description = "CIDR blocks allowed to reach the Prometheus UI via the ALB on port 9090. Restrict to your office/VPN IP range."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

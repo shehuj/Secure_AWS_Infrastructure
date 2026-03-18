@@ -34,8 +34,13 @@ output "grafana_efs_id" {
 }
 
 output "prometheus_endpoint" {
-  description = "Internal endpoint for Prometheus"
+  description = "Internal service-discovery endpoint for Prometheus (used by Grafana)"
   value       = "prometheus.${var.environment}.local:9090"
+}
+
+output "prometheus_url" {
+  description = "Public URL to access Prometheus UI via the ALB"
+  value       = "http://${aws_lb.grafana.dns_name}:9090"
 }
 
 output "grafana_admin_password" {

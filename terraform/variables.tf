@@ -197,6 +197,12 @@ variable "prometheus_retention_days" {
   default     = 15
 }
 
+variable "prometheus_allowed_cidrs" {
+  description = "CIDR blocks allowed to reach the Prometheus UI on port 9090. Restrict to your office/VPN IP."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 # User Analytics Variables (CloudWatch RUM + Custom Analytics)
 variable "enable_user_analytics" {
   description = "Enable comprehensive user analytics and monitoring (CloudWatch RUM + custom tracking)"
