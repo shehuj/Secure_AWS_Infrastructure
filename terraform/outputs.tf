@@ -111,8 +111,13 @@ output "grafana_alb_zone_id" {
 }
 
 output "prometheus_endpoint" {
-  description = "Internal endpoint for Prometheus"
+  description = "Internal endpoint for Prometheus (VPC-only)"
   value       = var.enable_observability ? module.observability[0].prometheus_endpoint : null
+}
+
+output "prometheus_url" {
+  description = "Public URL to access Prometheus UI via the ALB on port 9090"
+  value       = var.enable_observability ? module.observability[0].prometheus_url : null
 }
 
 output "prometheus_service_name" {
