@@ -434,7 +434,8 @@ resource "aws_ecs_task_definition" "prometheus" {
         "--storage.tsdb.path=/prometheus",
         "--storage.tsdb.retention.time=${var.prometheus_retention_days}d",
         "--web.console.libraries=/usr/share/prometheus/console_libraries",
-        "--web.console.templates=/usr/share/prometheus/consoles"
+        "--web.console.templates=/usr/share/prometheus/consoles",
+        "--web.enable-lifecycle"
       ]
 
       portMappings = [
