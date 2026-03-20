@@ -1,54 +1,81 @@
 global:
-  scrape_interval: 15s
+  scrape_interval:     15s
   evaluation_interval: 15s
   external_labels:
     cluster: '${ecs_cluster_name}'
-    region: '${region}'
+    region:  '${region}'
 
 scrape_configs:
-  # Prometheus self-monitoring
+
+  # ── Prometheus self-monitoring ──────────────────────────────────────────────
+  # Always works — confirms Prometheus itself is healthy.
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # ECS Service Discovery for Ghost application
-  - job_name: 'ecs-ghost'
-    ec2_sd_configs:
+  # ── ECS Fargate service discovery (all tasks in cluster) ───────────────────
+  # Uses ecs_sd_configs — the correct SD method for Fargate.
+  # ec2_sd_configs does NOT work with Fargate (no underlying EC2 to query).
+  - job_name: 'ecs-fargate'
+    ecs_sd_configs:
       - region: ${region}
-        port: 9090
-        filters:
-          - name: 'tag:aws:ecs:clusterName'
-            values: ['${ecs_cluster_name}']
-          - name: 'tag:aws:ecs:serviceName'
-            values: ['${ghost_service_name}']
 
     relabel_configs:
-      - source_labels: [__meta_ec2_tag_Name]
-        target_label: instance
-      - source_labels: [__meta_ec2_private_ip]
-        target_label: __address__
-        replacement: '$1:2368'
+      # Only keep tasks in our cluster
+      - source_labels: [__meta_ecs_cluster_arn]
+        regex:  '.*${ecs_cluster_name}.*'
+        action: keep
 
-  # ECS Task Metadata Endpoint (for container metrics)
-  - job_name: 'ecs-tasks'
-    ec2_sd_configs:
-      - region: ${region}
-        port: 51678
-        filters:
-          - name: 'tag:aws:ecs:clusterName'
-            values: ['${ecs_cluster_name}']
+      # Drop tasks that have no service name (one-off tasks, migrations, etc.)
+      - source_labels: [__meta_ecs_service_name]
+        regex:  '.+'
+        action: keep
 
-    relabel_configs:
-      - source_labels: [__meta_ec2_tag_aws_ecs_task_family]
+      # Expose useful labels in Grafana
+      - source_labels: [__meta_ecs_service_name]
+        target_label: service
+      - source_labels: [__meta_ecs_container_name]
+        target_label: container
+      - source_labels: [__meta_ecs_task_definition_family]
         target_label: task_family
-      - source_labels: [__meta_ec2_tag_aws_ecs_cluster_name]
-        target_label: cluster
-      - source_labels: [__meta_ec2_private_ip]
+      - source_labels: [__meta_ecs_task_health_status]
+        target_label: health
+
+  # ── Ghost application (ECS Fargate) ────────────────────────────────────────
+  # Ghost CMS does not expose Prometheus metrics natively.
+  # This job scrapes Ghost's built-in status endpoint and converts HTTP
+  # availability into an up/down probe that Grafana can alert on.
+  # To get full application metrics, add a metrics exporter sidecar.
+  - job_name: 'ghost-probe'
+    metrics_path: /ghost/api/v4/admin/site/
+    scheme: http
+    ecs_sd_configs:
+      - region: ${region}
+
+    relabel_configs:
+      # Keep only the Ghost service
+      - source_labels: [__meta_ecs_service_name]
+        regex:  '.*${ghost_service_name}.*'
+        action: keep
+
+      # Point to Ghost's HTTP port
+      - source_labels: [__address__]
+        regex:  '([^:]+)(?::\d+)?'
+        replacement: '$1:2368'
         target_label: __address__
-        replacement: '$1:51678'
-      - source_labels: []
-        target_label: __metrics_path__
-        replacement: '/task/stats'
+
+      - source_labels: [__meta_ecs_service_name]
+        target_label: service
+      - source_labels: [__meta_ecs_task_definition_family]
+        target_label: task_family
+
+  # ── CloudWatch Exporter ─────────────────────────────────────────────────────
+  # Exposes AWS CloudWatch metrics (EC2, ECS, ALB, RDS) to Prometheus.
+  # The cloudwatch-exporter container must be running on port 9106.
+  # See: https://github.com/prometheus/cloudwatch_exporter
+  - job_name: 'cloudwatch'
+    static_configs:
+      - targets: ['localhost:9106']
 
 alerting:
   alertmanagers:
