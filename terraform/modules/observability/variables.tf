@@ -44,6 +44,11 @@ variable "grafana_admin_password" {
   description = "Grafana admin password. Stored in Secrets Manager at deploy time. Must be provided via terraform.tfvars or TF_VAR_grafana_admin_password."
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = var.grafana_admin_password != ""
+    error_message = "grafana_admin_password must not be empty. Set TF_VAR_grafana_admin_password or add it to terraform.tfvars."
+  }
 }
 
 variable "ghost_service_name" {

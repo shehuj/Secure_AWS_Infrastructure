@@ -185,10 +185,15 @@ variable "grafana_certificate_arn" {
 }
 
 variable "grafana_admin_password" {
-  description = "Grafana admin password (must be provided via terraform.tfvars or AWS Secrets Manager)"
+  description = "Grafana admin password (must be provided via terraform.tfvars or TF_VAR_grafana_admin_password). Only required when enable_observability = true."
   type        = string
   sensitive   = true
-  default     = "" # No default - must be explicitly set for security
+  default     = ""
+
+  validation {
+    condition     = !var.enable_observability || var.grafana_admin_password != ""
+    error_message = "grafana_admin_password must not be empty when enable_observability is true. Set TF_VAR_grafana_admin_password or add it to terraform.tfvars."
+  }
 }
 
 variable "prometheus_retention_days" {
