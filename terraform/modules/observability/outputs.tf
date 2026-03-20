@@ -43,8 +43,7 @@ output "prometheus_url" {
   value       = "http://${aws_lb.grafana.dns_name}:9090"
 }
 
-output "grafana_admin_password" {
-  description = "Grafana admin password (sensitive)"
-  value       = var.grafana_admin_password
-  sensitive   = true
+output "grafana_admin_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the Grafana admin password"
+  value       = data.aws_secretsmanager_secret.grafana_admin_password.arn
 }

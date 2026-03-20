@@ -15,12 +15,12 @@ enable_observability = true
 ghost_domain_name    = "claudiq.com"
 grafana_domain_name  = "grafana.claudiq.com"
 
-# IMPORTANT: Set these via environment variables or GitHub Secrets:
-# - TF_VAR_grafana_admin_password
+# Grafana admin password is stored in AWS Secrets Manager.
+# Set this to the secret name (path) in Secrets Manager.
+grafana_admin_password_secret_name = "/prod/grafana/admin-password"
 
 grafana_certificate_arn = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
 
-# grafana_admin_password will be provided via TF_VAR_grafana_admin_password or fetched from AWS Secrets Manager
 
 prometheus_retention_days = 15
 # All variables are injected via GitHub Secrets as TF_VAR_* environment variables.
