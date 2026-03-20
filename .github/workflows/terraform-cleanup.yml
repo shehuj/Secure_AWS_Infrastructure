@@ -24,13 +24,12 @@ on:
 permissions:
   contents: read
   actions: write
+  id-token: write
 
 env:
   TF_IN_AUTOMATION: true
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   # Terraform variable injection from GitHub Secrets
   TF_VAR_route53_zone_id: ${{ secrets.TF_VAR_ROUTE53_ZONE_ID }}
   TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
@@ -82,6 +81,12 @@ jobs:
     needs: validate
     if: github.event.inputs.skip_pre_cleanup != 'true'
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Scale down ECS services to zero
         run: |
           echo "==> Scaling down ECS services..."
@@ -313,6 +318,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -373,6 +384,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -424,6 +441,12 @@ jobs:
     needs: destroy
     if: always()
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Check for remaining resources
         id: check_remaining
         run: |

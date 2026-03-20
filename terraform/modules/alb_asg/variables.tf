@@ -38,9 +38,8 @@ variable "max_size" {
 }
 
 variable "certificate_arn" {
-  description = "ARN of the ACM certificate for HTTPS"
+  description = "ARN of the ACM certificate for HTTPS. Must be provided via the root acm_certificate_arn variable."
   type        = string
-  default     = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
 }
 
 variable "health_check_path" {
