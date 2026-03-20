@@ -288,25 +288,11 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Secrets Manager secret for Grafana admin password
-resource "aws_secretsmanager_secret" "grafana_admin_password" {
-  name                    = "/${var.environment}/grafana/admin-password"
-  description             = "Grafana admin dashboard password"
-  recovery_window_in_days = 7
-
-  tags = merge(
-    {
-      Name        = "${var.environment}-grafana-admin-password"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    },
-    var.tags
-  )
-}
-
-resource "aws_secretsmanager_secret_version" "grafana_admin_password" {
-  secret_id     = aws_secretsmanager_secret.grafana_admin_password.id
-  secret_string = var.grafana_admin_password
+# Reference an existing Secrets Manager secret for the Grafana admin password.
+# Create the secret manually (or via the console) at the path below, then
+# Terraform will look it up and grant the ECS execution role access to it.
+data "aws_secretsmanager_secret" "grafana_admin_password" {
+  name = var.grafana_admin_password_secret_name
 }
 
 # Allow ECS execution role to read Grafana password from Secrets Manager
@@ -320,7 +306,7 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.grafana_admin_password.arn]
+        Resource = [data.aws_secretsmanager_secret.grafana_admin_password.arn]
       }
     ]
   })
@@ -562,7 +548,7 @@ resource "aws_ecs_task_definition" "grafana" {
       secrets = [
         {
           name      = "GF_SECURITY_ADMIN_PASSWORD"
-          valueFrom = aws_secretsmanager_secret.grafana_admin_password.arn
+          valueFrom = data.aws_secretsmanager_secret.grafana_admin_password.arn
         }
       ]
 
@@ -870,8 +856,7 @@ resource "aws_ecs_service" "grafana" {
   depends_on = [
     aws_lb_listener.grafana_https,
     aws_lb_listener.grafana_http,
-    aws_efs_mount_target.grafana,
-    aws_secretsmanager_secret_version.grafana_admin_password
+    aws_efs_mount_target.grafana
   ]
 
   tags = merge(

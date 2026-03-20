@@ -168,9 +168,9 @@ module "observability" {
   certificate_arn  = var.grafana_certificate_arn
   grafana_domain   = var.grafana_domain_name
 
-  ghost_service_name        = module.ghost_blog.ecs_service_name
-  grafana_admin_password    = var.grafana_admin_password
-  prometheus_retention_days = var.prometheus_retention_days
+  ghost_service_name                  = module.ghost_blog.ecs_service_name
+  grafana_admin_password_secret_name  = var.grafana_admin_password_secret_name
+  prometheus_retention_days           = var.prometheus_retention_days
   prometheus_allowed_cidrs  = var.prometheus_allowed_cidrs
 
   tags = var.tags

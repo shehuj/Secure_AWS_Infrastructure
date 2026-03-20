@@ -40,14 +40,13 @@ variable "prometheus_retention_days" {
   default     = 15
 }
 
-variable "grafana_admin_password" {
-  description = "Grafana admin password. Stored in Secrets Manager at deploy time. Must be provided via terraform.tfvars or TF_VAR_grafana_admin_password."
+variable "grafana_admin_password_secret_name" {
+  description = "Name (path) of an existing Secrets Manager secret containing the Grafana admin password. Example: /prod/grafana/admin-password"
   type        = string
-  sensitive   = true
 
   validation {
-    condition     = var.grafana_admin_password != ""
-    error_message = "grafana_admin_password must not be empty. Set TF_VAR_grafana_admin_password or add it to terraform.tfvars."
+    condition     = var.grafana_admin_password_secret_name != ""
+    error_message = "grafana_admin_password_secret_name must not be empty. Create the secret in AWS Secrets Manager first, then set this to its name (e.g. /prod/grafana/admin-password)."
   }
 }
 
