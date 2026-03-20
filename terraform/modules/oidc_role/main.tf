@@ -376,23 +376,39 @@ data "aws_iam_policy_document" "terraform_monitoring" {
   }
 }
 
-# Attach all three policies to the role
-resource "aws_iam_role_policy" "terraform_compute" {
-  name   = "TerraformOps-Compute"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.terraform_compute.json
+# Managed policies — each document is independently sized (max 6,144 chars each)
+# and does not count toward the 10,240-byte aggregate inline-policy limit.
+resource "aws_iam_policy" "terraform_compute" {
+  name        = "${var.role_name}-Compute"
+  description = "GitHub Actions Terraform — compute & networking permissions"
+  policy      = data.aws_iam_policy_document.terraform_compute.json
 }
 
-resource "aws_iam_role_policy" "terraform_data" {
-  name   = "TerraformOps-Data"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.terraform_data.json
+resource "aws_iam_policy" "terraform_data" {
+  name        = "${var.role_name}-Data"
+  description = "GitHub Actions Terraform — data & storage permissions"
+  policy      = data.aws_iam_policy_document.terraform_data.json
 }
 
-resource "aws_iam_role_policy" "terraform_monitoring" {
-  name   = "TerraformOps-Monitoring"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.terraform_monitoring.json
+resource "aws_iam_policy" "terraform_monitoring" {
+  name        = "${var.role_name}-Monitoring"
+  description = "GitHub Actions Terraform — monitoring & platform permissions"
+  policy      = data.aws_iam_policy_document.terraform_monitoring.json
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_compute" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = aws_iam_policy.terraform_compute.arn
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_data" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = aws_iam_policy.terraform_data.arn
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_monitoring" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = aws_iam_policy.terraform_monitoring.arn
 }
 
 # Optional: Attach AWS managed policies
