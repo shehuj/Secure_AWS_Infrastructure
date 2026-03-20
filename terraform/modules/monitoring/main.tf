@@ -41,8 +41,9 @@ resource "aws_cloudwatch_log_group" "nginx_error" {
 
 # SNS Topic for Alarms
 resource "aws_sns_topic" "alarms" {
-  count = var.create_sns_topic ? 1 : 0
-  name  = "${var.environment}-infrastructure-alarms"
+  count             = var.create_sns_topic ? 1 : 0
+  name              = "${var.environment}-infrastructure-alarms"
+  kms_master_key_id = "alias/aws/sns"
 
   tags = merge(
     {

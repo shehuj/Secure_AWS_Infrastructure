@@ -41,10 +41,9 @@ variable "prometheus_retention_days" {
 }
 
 variable "grafana_admin_password" {
-  description = "Grafana admin password (use AWS Secrets Manager in production)"
+  description = "Grafana admin password. Stored in Secrets Manager at deploy time. Must be provided via terraform.tfvars or TF_VAR_grafana_admin_password."
   type        = string
   sensitive   = true
-  default     = "changeme123"
 }
 
 variable "ghost_service_name" {

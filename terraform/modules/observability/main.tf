@@ -288,6 +288,44 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Secrets Manager secret for Grafana admin password
+resource "aws_secretsmanager_secret" "grafana_admin_password" {
+  name                    = "/${var.environment}/grafana/admin-password"
+  description             = "Grafana admin dashboard password"
+  recovery_window_in_days = 7
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-grafana-admin-password"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_secretsmanager_secret_version" "grafana_admin_password" {
+  secret_id     = aws_secretsmanager_secret.grafana_admin_password.id
+  secret_string = var.grafana_admin_password
+}
+
+# Allow ECS execution role to read Grafana password from Secrets Manager
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  name = "${var.environment}-monitoring-execution-secrets"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.grafana_admin_password.arn]
+      }
+    ]
+  })
+}
+
 # IAM Role for Prometheus task
 resource "aws_iam_role" "prometheus_task" {
   name = "${var.environment}-prometheus-task-role"
@@ -364,7 +402,7 @@ resource "aws_iam_role_policy_attachment" "prometheus_ecs_discovery" {
 # CloudWatch Logs for Prometheus
 resource "aws_cloudwatch_log_group" "prometheus" {
   name              = "/ecs/${var.environment}/prometheus"
-  retention_in_days = 7
+  retention_in_days = 90
 
   tags = merge(
     {
@@ -379,7 +417,7 @@ resource "aws_cloudwatch_log_group" "prometheus" {
 # CloudWatch Logs for Grafana
 resource "aws_cloudwatch_log_group" "grafana" {
   name              = "/ecs/${var.environment}/grafana"
-  retention_in_days = 7
+  retention_in_days = 90
 
   tags = merge(
     {
@@ -516,12 +554,15 @@ resource "aws_ecs_task_definition" "grafana" {
           value = "https://${var.grafana_domain}"
         },
         {
-          name  = "GF_SECURITY_ADMIN_PASSWORD"
-          value = var.grafana_admin_password
-        },
-        {
           name  = "GF_INSTALL_PLUGINS"
           value = "grafana-clock-panel,grafana-simple-json-datasource"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "GF_SECURITY_ADMIN_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.grafana_admin_password.arn
         }
       ]
 
@@ -829,7 +870,8 @@ resource "aws_ecs_service" "grafana" {
   depends_on = [
     aws_lb_listener.grafana_https,
     aws_lb_listener.grafana_http,
-    aws_efs_mount_target.grafana
+    aws_efs_mount_target.grafana,
+    aws_secretsmanager_secret_version.grafana_admin_password
   ]
 
   tags = merge(
