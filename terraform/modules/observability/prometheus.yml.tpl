@@ -69,9 +69,53 @@ scrape_configs:
       - source_labels: [__meta_ecs_task_definition_family]
         target_label: task_family
 
+  # ── Node Exporter (ECS Fargate) ────────────────────────────────────────────
+  # Exposes container-level CPU, memory and network metrics.
+  # Runs as a standalone ECS service on port 9100.
+  - job_name: 'node'
+    ecs_sd_configs:
+      - region: ${region}
+
+    relabel_configs:
+      - source_labels: [__meta_ecs_service_name]
+        regex:  '.*node-exporter.*'
+        action: keep
+
+      - source_labels: [__address__]
+        regex:  '([^:]+)(?::\d+)?'
+        replacement: '$1:9100'
+        target_label: __address__
+
+      - source_labels: [__meta_ecs_service_name]
+        target_label: service
+      - source_labels: [__meta_ecs_task_definition_family]
+        target_label: task_family
+
+  # ── MySQL Exporter ──────────────────────────────────────────────────────────
+  # Exposes RDS MySQL metrics (connections, query latency, InnoDB stats).
+  # Runs as a standalone ECS service on port 9104.
+  - job_name: 'mysql'
+    ecs_sd_configs:
+      - region: ${region}
+
+    relabel_configs:
+      - source_labels: [__meta_ecs_service_name]
+        regex:  '.*mysql-exporter.*'
+        action: keep
+
+      - source_labels: [__address__]
+        regex:  '([^:]+)(?::\d+)?'
+        replacement: '$1:9104'
+        target_label: __address__
+
+      - source_labels: [__meta_ecs_service_name]
+        target_label: service
+      - source_labels: [__meta_ecs_task_definition_family]
+        target_label: task_family
+
   # ── CloudWatch Exporter ─────────────────────────────────────────────────────
-  # Exposes AWS CloudWatch metrics (EC2, ECS, ALB, RDS) to Prometheus.
-  # The cloudwatch-exporter container must be running on port 9106.
+  # Exposes AWS CloudWatch metrics (ECS, ALB, RDS) to Prometheus.
+  # Runs as a sidecar in the Prometheus task on port 9106.
   # See: https://github.com/prometheus/cloudwatch_exporter
   - job_name: 'cloudwatch'
     static_configs:

@@ -171,7 +171,11 @@ module "observability" {
   ghost_service_name                  = module.ghost_blog.ecs_service_name
   grafana_admin_password_secret_name  = var.grafana_admin_password_secret_name
   prometheus_retention_days           = var.prometheus_retention_days
-  prometheus_allowed_cidrs  = var.prometheus_allowed_cidrs
+  prometheus_allowed_cidrs            = var.prometheus_allowed_cidrs
+
+  db_host                = module.ghost_db.db_address
+  db_user                = module.ghost_db.db_app_username
+  db_password_secret_arn = module.ghost_db.db_app_password_secret_arn
 
   tags = var.tags
 
