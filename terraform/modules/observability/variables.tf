@@ -61,6 +61,21 @@ variable "prometheus_allowed_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "db_host" {
+  description = "RDS MySQL endpoint hostname for the MySQL exporter"
+  type        = string
+}
+
+variable "db_user" {
+  description = "MySQL application username for the MySQL exporter"
+  type        = string
+}
+
+variable "db_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the MySQL application user password"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

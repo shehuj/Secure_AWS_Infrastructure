@@ -92,6 +92,22 @@ resource "aws_security_group" "monitoring_tasks" {
     self        = true
   }
 
+  ingress {
+    description = "Node Exporter"
+    from_port   = 9100
+    to_port     = 9100
+    protocol    = "tcp"
+    self        = true
+  }
+
+  ingress {
+    description = "MySQL Exporter"
+    from_port   = 9104
+    to_port     = 9104
+    protocol    = "tcp"
+    self        = true
+  }
+
   egress {
     description = "All outbound traffic"
     from_port   = 0
@@ -306,7 +322,10 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [data.aws_secretsmanager_secret.grafana_admin_password.arn]
+        Resource = [
+          data.aws_secretsmanager_secret.grafana_admin_password.arn,
+          var.db_password_secret_arn
+        ]
       }
     ]
   })
@@ -363,7 +382,9 @@ resource "aws_iam_policy" "prometheus_ecs_discovery" {
         Effect = "Allow"
         Action = [
           "cloudwatch:GetMetricStatistics",
-          "cloudwatch:ListMetrics"
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics",
+          "tag:GetResources"
         ]
         Resource = "*"
       }
@@ -420,6 +441,7 @@ resource "aws_ssm_parameter" "prometheus_config" {
   name        = "/${var.environment}/prometheus/config"
   description = "Prometheus configuration"
   type        = "String"
+  tier        = "Advanced"
   value = templatefile("${path.module}/prometheus.yml.tpl", {
     region             = data.aws_region.current.id
     ecs_cluster_name   = var.ecs_cluster_name
@@ -492,6 +514,53 @@ resource "aws_ecs_task_definition" "prometheus" {
         timeout     = 5
         retries     = 3
         startPeriod = 60
+      }
+    },
+
+    # ── CloudWatch Exporter sidecar ────────────────────────────────────────
+    # Runs alongside Prometheus in the same task (shared localhost network).
+    # Config is base64-encoded and written to /config/config.yml at startup.
+    {
+      name      = "cloudwatch-exporter"
+      image     = "prom/cloudwatch-exporter:latest"
+      essential = false
+
+      entryPoint = ["sh", "-c"]
+      command = [
+        "mkdir -p /config && printf '%s' \"$CW_CONFIG_B64\" | base64 -d > /config/config.yml && exec java -jar /cloudwatch_exporter.jar 9106 /config/config.yml"
+      ]
+
+      environment = [
+        {
+          name  = "CW_CONFIG_B64"
+          value = base64encode(templatefile("${path.module}/cloudwatch-exporter.yml.tpl", {
+            region = data.aws_region.current.id
+          }))
+        }
+      ]
+
+      portMappings = [
+        {
+          containerPort = 9106
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.prometheus.name
+          "awslogs-region"        = data.aws_region.current.id
+          "awslogs-stream-prefix" = "cloudwatch-exporter"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9106/metrics || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 120
       }
     }
   ])
@@ -941,6 +1010,214 @@ resource "aws_service_discovery_service" "prometheus" {
   tags = merge(
     {
       Name        = "${var.environment}-prometheus-discovery"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# ── Node Exporter ─────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_log_group" "node_exporter" {
+  name              = "/ecs/${var.environment}/node-exporter"
+  retention_in_days = 90
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-node-exporter-logs"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_ecs_task_definition" "node_exporter" {
+  family                   = "${var.environment}-node-exporter"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "node-exporter"
+      image     = "prom/node-exporter:latest"
+      essential = true
+
+      # On Fargate there is no underlying host to inspect, so disable
+      # collectors that require /proc or /sys from the host. The remaining
+      # collectors (cpu, meminfo, netdev) expose useful container-level stats.
+      command = [
+        "--collector.disable-defaults",
+        "--collector.cpu",
+        "--collector.meminfo",
+        "--collector.netdev",
+        "--web.listen-address=:9100"
+      ]
+
+      portMappings = [
+        {
+          containerPort = 9100
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.node_exporter.name
+          "awslogs-region"        = data.aws_region.current.id
+          "awslogs-stream-prefix" = "node-exporter"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9100/metrics || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
+    }
+  ])
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-node-exporter-task"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_ecs_service" "node_exporter" {
+  name            = "${var.environment}-node-exporter-service"
+  cluster         = var.ecs_cluster_id
+  task_definition = aws_ecs_task_definition.node_exporter.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [aws_security_group.monitoring_tasks.id]
+    assign_public_ip = true
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-node-exporter-service"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+# ── MySQL Exporter ────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_log_group" "mysql_exporter" {
+  name              = "/ecs/${var.environment}/mysql-exporter"
+  retention_in_days = 90
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-mysql-exporter-logs"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_ecs_task_definition" "mysql_exporter" {
+  family                   = "${var.environment}-mysql-exporter"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "mysql-exporter"
+      image     = "prom/mysqld-exporter:latest"
+      essential = true
+
+      # Build DATA_SOURCE_NAME at runtime from individual env vars so the
+      # password (injected via Secrets Manager) is never hardcoded.
+      entryPoint = ["sh", "-c"]
+      command = [
+        "DATA_SOURCE_NAME=\"$${DB_USER}:$${DB_PASSWORD}@tcp($${DB_HOST}:3306)/\" exec /bin/mysqld_exporter --collect.global_status --collect.info_schema.tables --collect.info_schema.innodb_metrics --no-collect.slave_status"
+      ]
+
+      environment = [
+        { name = "DB_HOST", value = var.db_host },
+        { name = "DB_USER", value = var.db_user }
+      ]
+
+      secrets = [
+        {
+          name      = "DB_PASSWORD"
+          valueFrom = var.db_password_secret_arn
+        }
+      ]
+
+      portMappings = [
+        {
+          containerPort = 9104
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.mysql_exporter.name
+          "awslogs-region"        = data.aws_region.current.id
+          "awslogs-stream-prefix" = "mysql-exporter"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9104/metrics || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
+    }
+  ])
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-mysql-exporter-task"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    },
+    var.tags
+  )
+}
+
+resource "aws_ecs_service" "mysql_exporter" {
+  name            = "${var.environment}-mysql-exporter-service"
+  cluster         = var.ecs_cluster_id
+  task_definition = aws_ecs_task_definition.mysql_exporter.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [aws_security_group.monitoring_tasks.id]
+    assign_public_ip = true
+  }
+
+  tags = merge(
+    {
+      Name        = "${var.environment}-mysql-exporter-service"
       Environment = var.environment
       ManagedBy   = "Terraform"
     },
