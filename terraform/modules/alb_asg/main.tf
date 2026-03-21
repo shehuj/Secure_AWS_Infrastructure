@@ -403,7 +403,7 @@ resource "aws_lb_listener" "http" {
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "web" {
-  name                      = "${var.environment}-web-asg"
+  name                      = "${var.environment}-webb-asg"
   vpc_zone_identifier       = var.subnet_ids
   target_group_arns         = [aws_lb_target_group.web.arn]
   health_check_type         = "ELB"

@@ -18,7 +18,7 @@ terraform {
     # - CLI flags: terraform init -backend-config="bucket=..." -backend-config="key=..."
     # - Environment variables: TF_CLI_ARGS_init
     bucket         = "ec2-shutdown-lambda-bucket"
-    key            = "terraform.tfstate/Host"
+    key            = "terraform.tfstate/ghost"
     region         = "us-east-1"
     dynamodb_table = "dyning_table"
 
