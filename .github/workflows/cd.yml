@@ -115,8 +115,9 @@ jobs:
               echo "  SKIP (already in state): $addr"
             else
               echo "  Importing $addr => $id"
-              terraform import "$addr" "$id" 2>&1 || echo "  WARN: import failed for $addr (will create fresh)"
+              terraform import "$addr" "$id" 2>&1 || { echo "  WARN: import failed for $addr (will create fresh)"; return 0; }
             fi
+            return 0
           }
 
           # Helper: import a CloudWatch log group if it exists in AWS
@@ -210,7 +211,6 @@ jobs:
           role_import "module.vpc.aws_iam_role.vpc_flow_logs[0]"                     "prod-vpc-flow-logs-role"
           role_import "module.ghost_blog.aws_iam_role.ecs_task_execution"            "prod-ghost-task-execution-role"
           role_import "module.ghost_blog.aws_iam_role.ecs_task"                      "prod-ghost-task-role"
-          role_import "module.ghost_db.aws_iam_role.rds_monitoring"                  "prod-ghost-rds-monitoring-role"
           role_import "module.observability[0].aws_iam_role.ecs_task_execution"      "prod-monitoring-task-execution-role"
           role_import "module.observability[0].aws_iam_role.prometheus_task"         "prod-prometheus-task-role"
 
