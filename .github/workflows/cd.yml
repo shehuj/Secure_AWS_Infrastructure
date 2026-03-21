@@ -103,23 +103,11 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Clear orphaned ASG
+      - name: Reconcile ASG state
         run: |
-          ASG_NAME="prod-web-asg"
-          EXISTS=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names "$ASG_NAME" \
-            --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
-          IN_STATE=$(terraform state list module.alb_asg.aws_autoscaling_group.web 2>/dev/null || echo "")
-          if [ "$EXISTS" = "1" ] && [ -z "$IN_STATE" ]; then
-            echo "Orphaned ASG found — deleting before apply..."
-            aws autoscaling update-auto-scaling-group \
-              --auto-scaling-group-name "$ASG_NAME" --min-size 0 --desired-capacity 0 || true
-            aws autoscaling delete-auto-scaling-group \
-              --auto-scaling-group-name "$ASG_NAME" --force-delete
-            aws autoscaling wait group-not-exists \
-              --auto-scaling-group-names "$ASG_NAME" 2>/dev/null || sleep 30
-            echo "Done — Terraform will recreate it."
-          fi
+          # If the ASG exists in AWS but not in Terraform state, import it.
+          # If it doesn't exist, this is a no-op and Terraform will create it.
+          terraform import module.alb_asg.aws_autoscaling_group.web prod-web-asg 2>&1 || true
 
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan -lock-timeout=5m
