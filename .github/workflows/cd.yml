@@ -119,7 +119,7 @@ jobs:
               echo "  SKIP (already in state): $addr"
             else
               echo "  Importing $addr => $id"
-              terraform import "$addr" "$id" 2>&1 || echo "  WARN: import failed for $addr (will create fresh)"
+              terraform import "$addr" "$id" 2>&1 || { echo "  WARN: import failed for $addr (will create fresh)"; return 0; }
             fi
             return 0
           }
