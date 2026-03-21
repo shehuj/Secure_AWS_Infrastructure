@@ -111,7 +111,7 @@ jobs:
           # Helper: import only if resource exists in AWS and is missing from state
           tf_import() {
             local addr="$1" id="$2"
-            if terraform state list "$addr" 2>/dev/null | grep -q "$addr"; then
+            if terraform state list "$addr" 2>/dev/null | grep -qF "$addr"; then
               echo "  SKIP (already in state): $addr"
             else
               echo "  Importing $addr => $id"
@@ -119,11 +119,63 @@ jobs:
             fi
           }
 
+          # Helper: import a CloudWatch log group if it exists in AWS
+          cw_import() {
+            local addr="$1" name="$2"
+            COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
+              --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
+            [ "$COUNT" = "1" ] && tf_import "$addr" "$name"
+          }
+
+          # Helper: import a security group by name
+          sg_import() {
+            local addr="$1" sg_name="$2" vpc_id="$3"
+            local filter="Name=group-name,Values=$sg_name"
+            [ -n "$vpc_id" ] && filter="$filter Name=vpc-id,Values=$vpc_id"
+            SG_ID=$(aws ec2 describe-security-groups --filters $filter \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ] && tf_import "$addr" "$SG_ID"
+          }
+
+          # Helper: import a target group by name
+          tg_import() {
+            local addr="$1" tg_name="$2"
+            TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" \
+              --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+            [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && tf_import "$addr" "$TG_ARN"
+          }
+
+          # Helper: import an ALB by name
+          alb_import() {
+            local addr="$1" alb_name="$2"
+            ALB_ARN=$(aws elbv2 describe-load-balancers --names "$alb_name" \
+              --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+            [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && tf_import "$addr" "$ALB_ARN"
+          }
+
+          # Helper: import an IAM role by name
+          role_import() {
+            local addr="$1" role_name="$2"
+            ROLE_EXISTS=$(aws iam get-role --role-name "$role_name" \
+              --query 'Role.RoleName' --output text 2>/dev/null || echo "")
+            [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ] && tf_import "$addr" "$role_name"
+          }
+
+          # Helper: import a secret by name
+          secret_import() {
+            local addr="$1" secret_name="$2"
+            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
+              --query 'ARN' --output text 2>/dev/null || echo "")
+            [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && tf_import "$addr" "$SECRET_ARN"
+          }
+
           echo "=== VPC (derived from existing ALB) ==="
-          # Use the ALB as the anchor — it's definitely in the right VPC
           ALB_VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
             --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
-          # Fall back to tag lookup if ALB doesn't exist yet
+          if [ -z "$ALB_VPC_ID" ] || [ "$ALB_VPC_ID" = "None" ]; then
+            ALB_VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-ghost-alb" \
+              --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
+          fi
           if [ -z "$ALB_VPC_ID" ] || [ "$ALB_VPC_ID" = "None" ]; then
             ALB_VPC_ID=$(aws ec2 describe-vpcs \
               --filters "Name=tag:Name,Values=prod-vpc" \
@@ -134,9 +186,8 @@ jobs:
           [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ] && \
             tf_import "module.vpc.aws_vpc.main" "$VPC_ID"
 
-          echo "=== Subnets (same VPC as ALB) ==="
+          echo "=== Subnets ==="
           if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            # Import public subnets — look up by Type tag first, fallback to mapPublicIpOnLaunch
             IDX=0
             for SN_ID in $(aws ec2 describe-subnets \
               --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
@@ -154,10 +205,13 @@ jobs:
           fi
 
           echo "=== IAM Roles ==="
-          tf_import "module.alb_asg.aws_iam_role.ec2" \
-            "prod-asg-ec2-role"
-          tf_import "module.vpc.aws_iam_role.vpc_flow_logs[0]" \
-            "prod-vpc-flow-logs-role"
+          role_import "module.alb_asg.aws_iam_role.ec2"                              "prod-asg-ec2-role"
+          role_import "module.vpc.aws_iam_role.vpc_flow_logs[0]"                     "prod-vpc-flow-logs-role"
+          role_import "module.ghost_blog.aws_iam_role.ecs_task_execution"            "prod-ghost-task-execution-role"
+          role_import "module.ghost_blog.aws_iam_role.ecs_task"                      "prod-ghost-task-role"
+          role_import "module.ghost_db.aws_iam_role.rds_monitoring"                  "prod-ghost-rds-monitoring-role"
+          role_import "module.observability[0].aws_iam_role.ecs_task_execution"      "prod-monitoring-task-execution-role"
+          role_import "module.observability[0].aws_iam_role.prometheus_task"         "prod-prometheus-task-role"
 
           echo "=== IAM Instance Profile ==="
           IP_EXISTS=$(aws iam get-instance-profile --instance-profile-name "prod-asg-instance-profile" \
@@ -166,37 +220,38 @@ jobs:
             tf_import "module.alb_asg.aws_iam_instance_profile.ec2" "prod-asg-instance-profile"
 
           echo "=== IAM Policies ==="
-          EC2_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/prod-asg-ec2-custom-policy"
-          EC2_POLICY_EXISTS=$(aws iam get-policy --policy-arn "$EC2_POLICY_ARN" \
-            --query 'Policy.Arn' --output text 2>/dev/null || echo "")
-          [ -n "$EC2_POLICY_EXISTS" ] && \
-            tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$EC2_POLICY_ARN"
-
-          echo "=== Security Groups ==="
-          for SG_NAME in "prod-alb-sg" "prod-asg-instances-sg" "prod-ghost-rds-sg"; do
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters "Name=group-name,Values=$SG_NAME" \
-              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-              case "$SG_NAME" in
-                *alb-sg)          tf_import "module.alb_asg.aws_security_group.alb" "$SG_ID" ;;
-                *asg-instances-sg) tf_import "module.alb_asg.aws_security_group.asg_instances" "$SG_ID" ;;
-                *rds-sg)          tf_import "module.ghost_db.aws_security_group.rds" "$SG_ID" ;;
-              esac
-            fi
+          for POLICY_SUFFIX in "prod-asg-ec2-custom-policy"; do
+            POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_SUFFIX}"
+            EXISTS=$(aws iam get-policy --policy-arn "$POLICY_ARN" \
+              --query 'Policy.Arn' --output text 2>/dev/null || echo "")
+            [ -n "$EXISTS" ] && tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$POLICY_ARN"
           done
 
-          echo "=== Target Group ==="
-          TG_ARN=$(aws elbv2 describe-target-groups --names "prod-web-tg" \
-            --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-          [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && \
-            tf_import "module.alb_asg.aws_lb_target_group.web" "$TG_ARN"
+          echo "=== Security Groups (alb_asg + rds) ==="
+          sg_import "module.alb_asg.aws_security_group.alb"          "prod-alb-sg"          "$VPC_ID"
+          sg_import "module.alb_asg.aws_security_group.asg_instances" "prod-asg-instances-sg" "$VPC_ID"
+          sg_import "module.ghost_db.aws_security_group.rds"         "prod-ghost-rds-sg"    "$VPC_ID"
 
-          echo "=== ALB ==="
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names "prod-alb" \
-            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-          [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && \
-            tf_import "module.alb_asg.aws_lb.main" "$ALB_ARN"
+          echo "=== Security Groups (ecs_ghost) ==="
+          sg_import "module.ghost_blog.aws_security_group.ghost_alb"   "prod-ghost-alb-sg"   "$VPC_ID"
+          sg_import "module.ghost_blog.aws_security_group.ghost_tasks"  "prod-ghost-tasks-sg" "$VPC_ID"
+          sg_import "module.ghost_blog.aws_security_group.ghost_efs"    "prod-ghost-efs-sg"   "$VPC_ID"
+
+          echo "=== Security Groups (observability) ==="
+          sg_import "module.observability[0].aws_security_group.grafana_alb"      "prod-grafana-alb-sg"      "$VPC_ID"
+          sg_import "module.observability[0].aws_security_group.monitoring_tasks"  "prod-monitoring-tasks-sg" "$VPC_ID"
+          sg_import "module.observability[0].aws_security_group.monitoring_efs"    "prod-monitoring-efs-sg"   "$VPC_ID"
+
+          echo "=== Target Groups ==="
+          tg_import "module.alb_asg.aws_lb_target_group.web"                   "prod-web-tg"
+          tg_import "module.ghost_blog.aws_lb_target_group.ghost"              "prod-ghost-tg"
+          tg_import "module.observability[0].aws_lb_target_group.grafana"      "prod-grafana-tg"
+          tg_import "module.observability[0].aws_lb_target_group.prometheus"   "prod-prometheus-tg"
+
+          echo "=== ALBs ==="
+          alb_import "module.alb_asg.aws_lb.main"           "prod-alb"
+          alb_import "module.ghost_blog.aws_lb.ghost"        "prod-ghost-alb"
+          alb_import "module.observability[0].aws_lb.grafana" "prod-grafana-alb"
 
           echo "=== Launch Template ==="
           LT_ID=$(aws ec2 describe-launch-templates \
@@ -206,7 +261,7 @@ jobs:
             tf_import "module.alb_asg.aws_launch_template.web" "$LT_ID"
 
           echo "=== Auto Scaling Group ==="
-          for ASG_NAME in "prod-webb-asg" "prod-web-asg"; do
+          for ASG_NAME in "prod-web-asg" "prod-webb-asg"; do
             ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
               --auto-scaling-group-names "$ASG_NAME" \
               --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
@@ -216,42 +271,107 @@ jobs:
             fi
           done
 
+          echo "=== ECS Cluster ==="
+          CLUSTER_ARN=$(aws ecs describe-clusters --clusters "prod-ghost-cluster" \
+            --query 'clusters[?status==`ACTIVE`].clusterArn' --output text 2>/dev/null || echo "")
+          [ -n "$CLUSTER_ARN" ] && [ "$CLUSTER_ARN" != "None" ] && \
+            tf_import "module.ghost_blog.aws_ecs_cluster.ghost" "$CLUSTER_ARN"
+
+          echo "=== ECS Services ==="
+          for SVC in "prod-ghost-service" "prod-prometheus-service" "prod-grafana-service" \
+                     "prod-node-exporter-service" "prod-mysql-exporter-service"; do
+            SVC_ARN=$(aws ecs describe-services --cluster "prod-ghost-cluster" --services "$SVC" \
+              --query 'services[?status==`ACTIVE`].serviceArn' --output text 2>/dev/null || echo "")
+            if [ -n "$SVC_ARN" ] && [ "$SVC_ARN" != "None" ]; then
+              case "$SVC" in
+                *ghost-service)          tf_import "module.ghost_blog.aws_ecs_service.ghost" \
+                                           "prod-ghost-cluster/prod-ghost-service" ;;
+                *prometheus-service)     tf_import "module.observability[0].aws_ecs_service.prometheus" \
+                                           "prod-ghost-cluster/prod-prometheus-service" ;;
+                *grafana-service)        tf_import "module.observability[0].aws_ecs_service.grafana" \
+                                           "prod-ghost-cluster/prod-grafana-service" ;;
+                *node-exporter-service)  tf_import "module.observability[0].aws_ecs_service.node_exporter" \
+                                           "prod-ghost-cluster/prod-node-exporter-service" ;;
+                *mysql-exporter-service) tf_import "module.observability[0].aws_ecs_service.mysql_exporter" \
+                                           "prod-ghost-cluster/prod-mysql-exporter-service" ;;
+              esac
+            fi
+          done
+
           echo "=== RDS ==="
-          tf_import "module.ghost_db.aws_db_subnet_group.ghost" \
-            "prod-ghost-db-subnet-group"
-          tf_import "module.ghost_db.aws_db_parameter_group.ghost" \
-            "prod-ghost-mysql-params"
+          tf_import "module.ghost_db.aws_db_subnet_group.ghost"    "prod-ghost-db-subnet-group"
+          tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
+          RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
+            --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
+          [ -n "$RDS_EXISTS" ] && [ "$RDS_EXISTS" != "None" ] && \
+            tf_import "module.ghost_db.aws_db_instance.ghost" "prod-ghost-db"
 
           echo "=== Secrets Manager ==="
-          for SECRET in "prod/ghost/rds/master-password" "prod/ghost/rds/app-password"; do
-            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET" \
-              --query 'ARN' --output text 2>/dev/null || echo "")
-            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ]; then
-              case "$SECRET" in
-                *master*) tf_import "module.ghost_db.aws_secretsmanager_secret.rds_password" "$SECRET_ARN" ;;
-                *app*)    tf_import "module.ghost_db.aws_secretsmanager_secret.app_user_password" "$SECRET_ARN" ;;
-              esac
-            fi
-          done
+          secret_import "module.ghost_db.aws_secretsmanager_secret.rds_password"      "prod/ghost/rds/master-password"
+          secret_import "module.ghost_db.aws_secretsmanager_secret.app_user_password" "prod/ghost/rds/app-password"
 
           echo "=== SSM Parameters ==="
-          for PARAM in "/prod/ghost/db/name" "/prod/ghost/db/master-user" "/prod/ghost/db/app-user"; do
+          declare -A SSM_MAP=(
+            ["/prod/ghost/db/host"]="module.ghost_db.aws_ssm_parameter.db_host"
+            ["/prod/ghost/db/port"]="module.ghost_db.aws_ssm_parameter.db_port"
+            ["/prod/ghost/db/name"]="module.ghost_db.aws_ssm_parameter.db_name"
+            ["/prod/ghost/db/master-user"]="module.ghost_db.aws_ssm_parameter.db_master_user"
+            ["/prod/ghost/db/app-user"]="module.ghost_db.aws_ssm_parameter.db_app_user"
+            ["/prod/prometheus/config"]="module.observability[0].aws_ssm_parameter.prometheus_config"
+          )
+          for PARAM in "${!SSM_MAP[@]}"; do
             PARAM_EXISTS=$(aws ssm get-parameter --name "$PARAM" \
               --query 'Parameter.Name' --output text 2>/dev/null || echo "")
-            if [ -n "$PARAM_EXISTS" ] && [ "$PARAM_EXISTS" != "None" ]; then
-              case "$PARAM" in
-                */name)        tf_import "module.ghost_db.aws_ssm_parameter.db_name" "$PARAM" ;;
-                */master-user) tf_import "module.ghost_db.aws_ssm_parameter.db_master_user" "$PARAM" ;;
-                */app-user)    tf_import "module.ghost_db.aws_ssm_parameter.db_app_user" "$PARAM" ;;
+            [ -n "$PARAM_EXISTS" ] && [ "$PARAM_EXISTS" != "None" ] && \
+              tf_import "${SSM_MAP[$PARAM]}" "$PARAM"
+          done
+
+          echo "=== EFS File Systems ==="
+          for EFS_TOKEN in "prod-ghost-efs" "prod-prometheus-efs" "prod-grafana-efs"; do
+            EFS_ID=$(aws efs describe-file-systems --creation-token "$EFS_TOKEN" \
+              --query 'FileSystems[0].FileSystemId' --output text 2>/dev/null || echo "")
+            if [ -n "$EFS_ID" ] && [ "$EFS_ID" != "None" ]; then
+              case "$EFS_TOKEN" in
+                *ghost*)      tf_import "module.ghost_blog.aws_efs_file_system.ghost" "$EFS_ID" ;;
+                *prometheus*) tf_import "module.observability[0].aws_efs_file_system.prometheus" "$EFS_ID" ;;
+                *grafana*)    tf_import "module.observability[0].aws_efs_file_system.grafana" "$EFS_ID" ;;
               esac
             fi
           done
 
+          echo "=== Route53 Records ==="
+          ZONE_ID="${TF_VAR_route53_zone_id}"
+          GHOST_DOMAIN="${TF_VAR_ghost_domain_name}"
+          if [ -n "$ZONE_ID" ] && [ -n "$GHOST_DOMAIN" ]; then
+            for RECORD_NAME in "$GHOST_DOMAIN" "www.${GHOST_DOMAIN}"; do
+              R53_EXISTS=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+                --query "ResourceRecordSets[?Name=='${RECORD_NAME}.'].Name" \
+                --output text 2>/dev/null || echo "")
+              if [ -n "$R53_EXISTS" ] && [ "$R53_EXISTS" != "None" ]; then
+                case "$RECORD_NAME" in
+                  www.*) tf_import "module.ghost_blog.aws_route53_record.ghost_www" \
+                           "${ZONE_ID}_${RECORD_NAME}_A" ;;
+                  *)     tf_import "module.ghost_blog.aws_route53_record.ghost" \
+                           "${ZONE_ID}_${RECORD_NAME}_A" ;;
+                esac
+              fi
+            done
+          fi
+
           echo "=== CloudWatch Log Groups ==="
-          CW_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/vpc/prod-flow-logs" \
-            --query 'length(logGroups)' --output text 2>/dev/null || echo "0")
-          [ "$CW_EXISTS" = "1" ] && \
-            tf_import "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]" "/aws/vpc/prod-flow-logs"
+          cw_import "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]"                     "/aws/vpc/prod-flow-logs"
+          cw_import "module.ghost_blog.aws_cloudwatch_log_group.ghost"                         "/ecs/prod/ghost"
+          cw_import "module.monitoring.aws_cloudwatch_log_group.nginx_access"                  "/aws/ec2/prod/nginx/access"
+          cw_import "module.monitoring.aws_cloudwatch_log_group.nginx_error"                   "/aws/ec2/prod/nginx/error"
+          cw_import "module.observability[0].aws_cloudwatch_log_group.prometheus"              "/ecs/prod/prometheus"
+          cw_import "module.observability[0].aws_cloudwatch_log_group.grafana"                 "/ecs/prod/grafana"
+          cw_import "module.observability[0].aws_cloudwatch_log_group.node_exporter"           "/ecs/prod/node-exporter"
+          cw_import "module.observability[0].aws_cloudwatch_log_group.mysql_exporter"          "/ecs/prod/mysql-exporter"
+          cw_import "module.user_analytics[0].aws_cloudwatch_log_group.rum"                    "/aws/rum/prod/ghost"
+          cw_import "module.user_analytics[0].aws_cloudwatch_log_group.user_analytics"         "/aws/analytics/prod/ghost/users"
+          cw_import "module.user_analytics[0].aws_cloudwatch_log_group.pageviews"              "/aws/analytics/prod/ghost/pageviews"
+          cw_import "module.user_analytics[0].aws_cloudwatch_log_group.engagement"             "/aws/analytics/prod/ghost/engagement"
+          cw_import "module.user_analytics[0].aws_cloudwatch_log_group.api_gateway"            "/aws/apigateway/prod/ghost-analytics"
 
           echo "=== Reconcile complete ==="
 

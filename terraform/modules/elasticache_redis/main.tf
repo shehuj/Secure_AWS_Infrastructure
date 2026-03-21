@@ -170,7 +170,7 @@ resource "aws_secretsmanager_secret" "redis_auth_token" {
   count                   = var.transit_encryption_enabled ? 1 : 0
   name                    = "${var.environment}/ghost/redis/auth-token"
   description             = "Auth token for Ghost Redis cluster"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 
   tags = merge(
     {
