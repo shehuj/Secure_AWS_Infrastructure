@@ -83,17 +83,6 @@ output "cloudwatch_dashboard_name" {
   value       = module.monitoring.dashboard_name
 }
 
-# GitHub OIDC Outputs
-output "github_actions_role_arn" {
-  description = "ARN of the GitHub Actions IAM role"
-  value       = module.github_oidc.role_arn
-}
-
-output "github_actions_role_name" {
-  description = "Name of the GitHub Actions IAM role"
-  value       = module.github_oidc.role_name
-}
-
 # Observability Outputs (Prometheus + Grafana)
 output "grafana_url" {
   description = "URL to access Grafana dashboard"
