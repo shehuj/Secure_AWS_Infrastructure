@@ -40,6 +40,10 @@ env:
 
 jobs:
   # ── 0. Bootstrap: ensure OIDC role & policies are current ────────────────────
+  # Uses static bootstrap credentials (AWS_BOOTSTRAP_ACCESS_KEY_ID /
+  # AWS_BOOTSTRAP_SECRET_ACCESS_KEY) stored as GitHub secrets.
+  # These are the ONLY static credentials in the pipeline — everything else
+  # uses OIDC. The bootstrap user needs only IAM + sts:GetCallerIdentity.
   bootstrap-oidc:
     name: Bootstrap OIDC Role
     runs-on: ubuntu-latest
@@ -49,10 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure bootstrap AWS credentials (static)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_BOOTSTRAP_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
