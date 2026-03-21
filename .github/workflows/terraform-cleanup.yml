@@ -73,12 +73,44 @@ jobs:
           echo "| Ref | ${{ github.ref }} |" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────
-  # 2. Pre-destroy: resources that block tf destroy
+  # 2. Bootstrap: ensure OIDC role & policies are current
+  # ─────────────────────────────────────────────
+  bootstrap-oidc:
+    name: Bootstrap OIDC Role
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.confirmed == 'true'
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure bootstrap AWS credentials (static)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_BOOTSTRAP_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.9
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Apply OIDC module
+        run: terraform apply -target=module.github_oidc -auto-approve -input=false -lock-timeout=5m
+
+  # ─────────────────────────────────────────────
+  # 3. Pre-destroy: resources that block tf destroy
   # ─────────────────────────────────────────────
   pre-destroy-cleanup:
     name: Pre-Destroy Resource Cleanup
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, bootstrap-oidc]
     if: github.event.inputs.skip_pre_cleanup != 'true'
     steps:
       - name: Configure AWS credentials
@@ -304,13 +336,13 @@ jobs:
           echo "✅ ASG drain complete"
 
   # ─────────────────────────────────────────────
-  # 3. Terraform plan the destroy (show what will be removed)
+  # 4. Terraform plan the destroy (show what will be removed)
   # ─────────────────────────────────────────────
   destroy-plan:
     name: Plan Destroy
     runs-on: ubuntu-latest
-    needs: [validate, pre-destroy-cleanup]
-    if: always() && needs.validate.outputs.confirmed == 'true' && (needs.pre-destroy-cleanup.result == 'success' || needs.pre-destroy-cleanup.result == 'skipped')
+    needs: [validate, bootstrap-oidc, pre-destroy-cleanup]
+    if: always() && needs.validate.outputs.confirmed == 'true' && needs.bootstrap-oidc.result == 'success' && (needs.pre-destroy-cleanup.result == 'success' || needs.pre-destroy-cleanup.result == 'skipped')
     defaults:
       run:
         working-directory: ./terraform
@@ -327,7 +359,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ~1.7
+          terraform_version: ~1.9
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -335,8 +367,11 @@ jobs:
       - name: Terraform Destroy Plan
         id: destroy_plan
         run: |
+          # -exclude=module.github_oidc preserves the OIDC provider and IAM role
+          # so the pipeline can authenticate on future runs after a full teardown.
           terraform plan \
             -destroy \
+            -exclude=module.github_oidc \
             -input=false \
             -no-color \
             -out=destroy.tfplan \
@@ -369,7 +404,7 @@ jobs:
           echo "</details>" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────
-  # 4. Execute terraform destroy
+  # 5. Execute terraform destroy
   # ─────────────────────────────────────────────
   destroy:
     name: Terraform Destroy
@@ -393,7 +428,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ~1.7
+          terraform_version: ~1.9
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -433,7 +468,7 @@ jobs:
           exit 1
 
   # ─────────────────────────────────────────────
-  # 5. Post-destroy: verify and report
+  # 6. Post-destroy: verify and report
   # ─────────────────────────────────────────────
   verify:
     name: Verify Cleanup
@@ -539,7 +574,7 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────
-  # 6. Clean up GitHub Actions artifacts
+  # 7. Clean up GitHub Actions artifacts
   # ─────────────────────────────────────────────
   clean-artifacts:
     name: Clean Workflow Artifacts
