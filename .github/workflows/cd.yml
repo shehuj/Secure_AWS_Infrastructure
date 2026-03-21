@@ -83,7 +83,6 @@ jobs:
       alb_dns_name: ${{ steps.outputs.outputs.alb_dns_name }}
       ghost_url: ${{ steps.outputs.outputs.ghost_url }}
       grafana_url: ${{ steps.outputs.outputs.grafana_url }}
-      asg_name: ${{ steps.outputs.outputs.asg_name }}
       ecs_cluster_name: ${{ steps.outputs.outputs.ecs_cluster_name }}
       ecs_service_name: ${{ steps.outputs.outputs.ecs_service_name }}
       rds_identifier: ${{ steps.outputs.outputs.rds_identifier }}
@@ -121,7 +120,6 @@ jobs:
           echo "alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
           echo "ghost_url=$(terraform output -raw ghost_alb_dns_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
           echo "grafana_url=$(terraform output -raw grafana_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
-          echo "asg_name=$(terraform output -raw asg_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
           echo "ecs_cluster_name=$(terraform output -raw ghost_ecs_cluster_name 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-cluster")" >> $GITHUB_OUTPUT
           echo "ecs_service_name=$(terraform output -raw ghost_ecs_service_name 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-service")" >> $GITHUB_OUTPUT
           echo "rds_identifier=$(terraform output -raw rds_identifier 2>/dev/null || echo "${TF_VAR_environment:-prod}-ghost-db")" >> $GITHUB_OUTPUT
