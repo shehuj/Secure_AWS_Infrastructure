@@ -104,20 +104,31 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Import orphaned resources
+      - name: Remove orphaned ASG (if exists outside Terraform state)
         run: |
           ENV="${{ secrets.TF_VAR_ENVIRONMENT || 'prod' }}"
-
-          # ASG: may exist from a prior partial apply that lost state
           ASG_NAME="${ENV}-web-asg"
+
           ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names "$ASG_NAME" \
-            --query 'AutoScalingGroups[0].AutoScalingGroupName' \
-            --output text 2>/dev/null || echo "")
+            --query 'length(AutoScalingGroups)' \
+            --output text 2>/dev/null || echo "0")
           IN_STATE=$(terraform state list module.alb_asg.aws_autoscaling_group.web 2>/dev/null || echo "")
-          if [ "$ASG_EXISTS" = "$ASG_NAME" ] && [ -z "$IN_STATE" ]; then
-            echo "Importing orphaned ASG: $ASG_NAME"
-            terraform import module.alb_asg.aws_autoscaling_group.web "$ASG_NAME"
+
+          if [ "$ASG_EXISTS" = "1" ] && [ -z "$IN_STATE" ]; then
+            echo "Found orphaned ASG $ASG_NAME (not in Terraform state). Deleting so Terraform can recreate it cleanly..."
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --min-size 0 --desired-capacity 0 2>/dev/null || true
+            aws autoscaling delete-auto-scaling-group \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --force-delete 2>/dev/null || true
+            echo "Waiting for ASG deletion..."
+            aws autoscaling wait group-not-exists \
+              --auto-scaling-group-names "$ASG_NAME" 2>/dev/null || sleep 30
+            echo "ASG deleted. Terraform will recreate it."
+          else
+            echo "ASG state OK (exists=$ASG_EXISTS, in_state=${IN_STATE:-none}). No action needed."
           fi
 
       - name: Terraform Plan
