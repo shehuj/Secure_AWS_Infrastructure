@@ -105,6 +105,10 @@ jobs:
 
       - name: Reconcile Terraform state
         run: |
+          # Disable exit-on-error: reconcile is best-effort; individual import
+          # failures must not abort the step (each helper handles its own errors).
+          set +e
+
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ENV="prod"
 
@@ -123,101 +127,63 @@ jobs:
           # Helper: import a CloudWatch log group if it exists in AWS
           cw_import() {
             local addr="$1" name="$2"
+            local COUNT
             COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
               --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
-            [ "$COUNT" = "1" ] && tf_import "$addr" "$name"
+            if [ "$COUNT" = "1" ]; then tf_import "$addr" "$name"; fi
+            return 0
           }
 
-          # Helper: import a security group by name
+          # Helper: import a security group by name (optionally scoped to VPC)
           sg_import() {
             local addr="$1" sg_name="$2" vpc_id="$3"
             local filter="Name=group-name,Values=$sg_name"
-            [ -n "$vpc_id" ] && filter="$filter Name=vpc-id,Values=$vpc_id"
+            if [ -n "$vpc_id" ]; then filter="$filter Name=vpc-id,Values=$vpc_id"; fi
+            local SG_ID
             SG_ID=$(aws ec2 describe-security-groups --filters $filter \
               --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-            [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ] && tf_import "$addr" "$SG_ID"
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then tf_import "$addr" "$SG_ID"; fi
+            return 0
           }
 
           # Helper: import a target group by name
           tg_import() {
             local addr="$1" tg_name="$2"
+            local TG_ARN
             TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" \
               --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-            [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && tf_import "$addr" "$TG_ARN"
+            if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then tf_import "$addr" "$TG_ARN"; fi
+            return 0
           }
 
           # Helper: import an ALB by name
           alb_import() {
             local addr="$1" alb_name="$2"
+            local ALB_ARN
             ALB_ARN=$(aws elbv2 describe-load-balancers --names "$alb_name" \
               --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-            [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && tf_import "$addr" "$ALB_ARN"
+            if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then tf_import "$addr" "$ALB_ARN"; fi
+            return 0
           }
 
           # Helper: import an IAM role by name
           role_import() {
             local addr="$1" role_name="$2"
+            local ROLE_EXISTS
             ROLE_EXISTS=$(aws iam get-role --role-name "$role_name" \
               --query 'Role.RoleName' --output text 2>/dev/null || echo "")
-            [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ] && tf_import "$addr" "$role_name"
+            if [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ]; then tf_import "$addr" "$role_name"; fi
+            return 0
           }
 
-          # Helper: import a secret by name
+          # Helper: import a Secrets Manager secret by name
           secret_import() {
             local addr="$1" secret_name="$2"
+            local SECRET_ARN
             SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
               --query 'ARN' --output text 2>/dev/null || echo "")
-            [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && tf_import "$addr" "$SECRET_ARN"
-          }
-
-          # Helper: import a CloudWatch log group if it exists in AWS
-          cw_import() {
-            local addr="$1" name="$2"
-            COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
-              --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
-            [ "$COUNT" = "1" ] && tf_import "$addr" "$name"
-          }
-
-          # Helper: import a security group by name
-          sg_import() {
-            local addr="$1" sg_name="$2" vpc_id="$3"
-            local filter="Name=group-name,Values=$sg_name"
-            [ -n "$vpc_id" ] && filter="$filter Name=vpc-id,Values=$vpc_id"
-            SG_ID=$(aws ec2 describe-security-groups --filters $filter \
-              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-            [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ] && tf_import "$addr" "$SG_ID"
-          }
-
-          # Helper: import a target group by name
-          tg_import() {
-            local addr="$1" tg_name="$2"
-            TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" \
-              --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-            [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && tf_import "$addr" "$TG_ARN"
-          }
-
-          # Helper: import an ALB by name
-          alb_import() {
-            local addr="$1" alb_name="$2"
-            ALB_ARN=$(aws elbv2 describe-load-balancers --names "$alb_name" \
-              --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-            [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && tf_import "$addr" "$ALB_ARN"
-          }
-
-          # Helper: import an IAM role by name
-          role_import() {
-            local addr="$1" role_name="$2"
-            ROLE_EXISTS=$(aws iam get-role --role-name "$role_name" \
-              --query 'Role.RoleName' --output text 2>/dev/null || echo "")
-            [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ] && tf_import "$addr" "$role_name"
-          }
-
-          # Helper: import a secret by name
-          secret_import() {
-            local addr="$1" secret_name="$2"
-            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
-              --query 'ARN' --output text 2>/dev/null || echo "")
-            [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && tf_import "$addr" "$SECRET_ARN"
+            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ]; then tf_import "$addr" "$SECRET_ARN"; fi
+            return 0
           }
 
           echo "=== VPC (derived from existing ALB) ==="
@@ -234,8 +200,9 @@ jobs:
           fi
           VPC_ID="$ALB_VPC_ID"
           echo "  VPC ID: $VPC_ID"
-          [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ] && \
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
             tf_import "module.vpc.aws_vpc.main" "$VPC_ID"
+          fi
 
           echo "=== Subnets (same VPC as ALB) ==="
           if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
@@ -267,15 +234,16 @@ jobs:
           echo "=== IAM Instance Profile ==="
           IP_EXISTS=$(aws iam get-instance-profile --instance-profile-name "prod-asg-instance-profile" \
             --query 'InstanceProfile.InstanceProfileName' --output text 2>/dev/null || echo "")
-          [ -n "$IP_EXISTS" ] && [ "$IP_EXISTS" != "None" ] && \
+          if [ -n "$IP_EXISTS" ] && [ "$IP_EXISTS" != "None" ]; then
             tf_import "module.alb_asg.aws_iam_instance_profile.ec2" "prod-asg-instance-profile"
+          fi
 
           echo "=== IAM Policies ==="
           for POLICY_SUFFIX in "prod-asg-ec2-custom-policy"; do
             POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_SUFFIX}"
             EXISTS=$(aws iam get-policy --policy-arn "$POLICY_ARN" \
               --query 'Policy.Arn' --output text 2>/dev/null || echo "")
-            [ -n "$EXISTS" ] && tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$POLICY_ARN"
+            if [ -n "$EXISTS" ]; then tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$POLICY_ARN"; fi
           done
 
           echo "=== Security Groups (alb_asg + rds) ==="
@@ -308,8 +276,9 @@ jobs:
           LT_ID=$(aws ec2 describe-launch-templates \
             --filters "Name=launch-template-name,Values=prod-web-*" \
             --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null || echo "")
-          [ -n "$LT_ID" ] && [ "$LT_ID" != "None" ] && \
+          if [ -n "$LT_ID" ] && [ "$LT_ID" != "None" ]; then
             tf_import "module.alb_asg.aws_launch_template.web" "$LT_ID"
+          fi
 
           echo "=== Auto Scaling Group ==="
           for ASG_NAME in "prod-web-asg" "prod-webb-asg"; do
@@ -333,8 +302,9 @@ jobs:
           fi
           CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters "prod-ghost-cluster" \
             --query 'length(clusters[?status==`ACTIVE`])' --output text 2>/dev/null || echo "0")
-          [ "$CLUSTER_EXISTS" = "1" ] && \
+          if [ "$CLUSTER_EXISTS" = "1" ]; then
             tf_import "module.ghost_blog.aws_ecs_cluster.ghost" "prod-ghost-cluster"
+          fi
 
           echo "=== ECS Services ==="
           for SVC in "prod-ghost-service" "prod-prometheus-service" "prod-grafana-service" \
@@ -362,8 +332,9 @@ jobs:
           tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
           RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
             --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
-          [ -n "$RDS_EXISTS" ] && [ "$RDS_EXISTS" != "None" ] && \
+          if [ -n "$RDS_EXISTS" ] && [ "$RDS_EXISTS" != "None" ]; then
             tf_import "module.ghost_db.aws_db_instance.ghost" "prod-ghost-db"
+          fi
 
           echo "=== Secrets Manager ==="
           secret_import "module.ghost_db.aws_secretsmanager_secret.rds_password"      "prod/ghost/rds/master-password"
@@ -381,8 +352,9 @@ jobs:
           for PARAM in "${!SSM_MAP[@]}"; do
             PARAM_EXISTS=$(aws ssm get-parameter --name "$PARAM" \
               --query 'Parameter.Name' --output text 2>/dev/null || echo "")
-            [ -n "$PARAM_EXISTS" ] && [ "$PARAM_EXISTS" != "None" ] && \
+            if [ -n "$PARAM_EXISTS" ] && [ "$PARAM_EXISTS" != "None" ]; then
               tf_import "${SSM_MAP[$PARAM]}" "$PARAM"
+            fi
           done
 
           echo "=== EFS File Systems ==="
