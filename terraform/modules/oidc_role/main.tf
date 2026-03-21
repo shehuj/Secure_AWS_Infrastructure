@@ -124,7 +124,14 @@ data "aws_iam_policy_document" "terraform_compute" {
       "iam:GetOpenIDConnectProvider", "iam:CreateOpenIDConnectProvider",
       "iam:DeleteOpenIDConnectProvider", "iam:ListOpenIDConnectProviders",
       "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider",
-      "iam:ListOpenIDConnectProviderTags"
+      "iam:ListOpenIDConnectProviderTags",
+      "iam:GetUser", "iam:CreateUser", "iam:DeleteUser",
+      "iam:TagUser", "iam:UntagUser", "iam:ListUserTags",
+      "iam:PutUserPolicy", "iam:GetUserPolicy", "iam:DeleteUserPolicy",
+      "iam:ListUserPolicies", "iam:ListAttachedUserPolicies",
+      "iam:AttachUserPolicy", "iam:DetachUserPolicy",
+      "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:ListAccessKeys",
+      "iam:UpdateAccessKey"
     ]
     resources = ["*"]
   }
