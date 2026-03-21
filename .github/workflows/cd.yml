@@ -170,6 +170,56 @@ jobs:
             [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && tf_import "$addr" "$SECRET_ARN"
           }
 
+          # Helper: import a CloudWatch log group if it exists in AWS
+          cw_import() {
+            local addr="$1" name="$2"
+            COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
+              --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
+            [ "$COUNT" = "1" ] && tf_import "$addr" "$name"
+          }
+
+          # Helper: import a security group by name
+          sg_import() {
+            local addr="$1" sg_name="$2" vpc_id="$3"
+            local filter="Name=group-name,Values=$sg_name"
+            [ -n "$vpc_id" ] && filter="$filter Name=vpc-id,Values=$vpc_id"
+            SG_ID=$(aws ec2 describe-security-groups --filters $filter \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ] && tf_import "$addr" "$SG_ID"
+          }
+
+          # Helper: import a target group by name
+          tg_import() {
+            local addr="$1" tg_name="$2"
+            TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" \
+              --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+            [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && tf_import "$addr" "$TG_ARN"
+          }
+
+          # Helper: import an ALB by name
+          alb_import() {
+            local addr="$1" alb_name="$2"
+            ALB_ARN=$(aws elbv2 describe-load-balancers --names "$alb_name" \
+              --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+            [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && tf_import "$addr" "$ALB_ARN"
+          }
+
+          # Helper: import an IAM role by name
+          role_import() {
+            local addr="$1" role_name="$2"
+            ROLE_EXISTS=$(aws iam get-role --role-name "$role_name" \
+              --query 'Role.RoleName' --output text 2>/dev/null || echo "")
+            [ -n "$ROLE_EXISTS" ] && [ "$ROLE_EXISTS" != "None" ] && tf_import "$addr" "$role_name"
+          }
+
+          # Helper: import a secret by name
+          secret_import() {
+            local addr="$1" secret_name="$2"
+            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
+              --query 'ARN' --output text 2>/dev/null || echo "")
+            [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && tf_import "$addr" "$SECRET_ARN"
+          }
+
           echo "=== VPC (derived from existing ALB) ==="
           ALB_VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
             --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
