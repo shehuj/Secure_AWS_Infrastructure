@@ -103,33 +103,99 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Import orphaned ASG and launch template
+      - name: Reconcile Terraform state
         run: |
-          ASG_NAME="prod-web-asg"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ENV="prod"
 
-          # ── Launch Template: import first so ASG config is evaluable ─────────
-          LT_IN_STATE=$(terraform state list module.alb_asg.aws_launch_template.web 2>/dev/null || echo "")
-          if [ -z "$LT_IN_STATE" ]; then
-            LT_ID=$(aws ec2 describe-launch-templates \
-              --filters "Name=launch-template-name,Values=prod-web-*" \
-              --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null || echo "")
-            if [ -n "$LT_ID" ] && [ "$LT_ID" != "None" ]; then
-              echo "Importing launch template: $LT_ID"
-              terraform import module.alb_asg.aws_launch_template.web "$LT_ID" || true
+          # Helper: import only if resource exists in AWS and is missing from state
+          tf_import() {
+            local addr="$1" id="$2"
+            if terraform state list "$addr" 2>/dev/null | grep -q "$addr"; then
+              echo "  SKIP (already in state): $addr"
+            else
+              echo "  Importing $addr => $id"
+              terraform import "$addr" "$id" 2>&1 || echo "  WARN: import failed for $addr (will create fresh)"
             fi
-          fi
+          }
 
-          # ── ASG: import after launch template is in state ────────────────────
-          ASG_IN_STATE=$(terraform state list module.alb_asg.aws_autoscaling_group.web 2>/dev/null || echo "")
-          if [ -z "$ASG_IN_STATE" ]; then
-            ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
-              --auto-scaling-group-names "$ASG_NAME" \
-              --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
-            if [ "$ASG_EXISTS" = "1" ]; then
-              echo "Importing ASG: $ASG_NAME"
-              terraform import module.alb_asg.aws_autoscaling_group.web "$ASG_NAME" || true
+          echo "=== IAM Roles ==="
+          tf_import "module.alb_asg.aws_iam_role.ec2" \
+            "prod-asg-ec2-role"
+          tf_import "module.vpc.aws_iam_role.vpc_flow_logs[0]" \
+            "prod-vpc-flow-logs-role"
+
+          echo "=== IAM Policies ==="
+          EC2_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/prod-asg-ec2-custom-policy"
+          EC2_POLICY_EXISTS=$(aws iam get-policy --policy-arn "$EC2_POLICY_ARN" \
+            --query 'Policy.Arn' --output text 2>/dev/null || echo "")
+          [ -n "$EC2_POLICY_EXISTS" ] && \
+            tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$EC2_POLICY_ARN"
+
+          echo "=== ALB ==="
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "prod-alb" \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+          [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && \
+            tf_import "module.alb_asg.aws_lb.main" "$ALB_ARN"
+
+          echo "=== Target Group ==="
+          TG_ARN=$(aws elbv2 describe-target-groups --names "prod-web-tg" \
+            --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+          [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && \
+            tf_import "module.alb_asg.aws_lb_target_group.web" "$TG_ARN"
+
+          echo "=== Launch Template ==="
+          LT_ID=$(aws ec2 describe-launch-templates \
+            --filters "Name=launch-template-name,Values=prod-web-*" \
+            --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null || echo "")
+          [ -n "$LT_ID" ] && [ "$LT_ID" != "None" ] && \
+            tf_import "module.alb_asg.aws_launch_template.web" "$LT_ID"
+
+          echo "=== Auto Scaling Group ==="
+          ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names "prod-web-asg" \
+            --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
+          [ "$ASG_EXISTS" = "1" ] && \
+            tf_import "module.alb_asg.aws_autoscaling_group.web" "prod-web-asg"
+
+          echo "=== RDS ==="
+          tf_import "module.ghost_db.aws_db_subnet_group.ghost" \
+            "prod-ghost-db-subnet-group"
+          tf_import "module.ghost_db.aws_db_parameter_group.ghost" \
+            "prod-ghost-mysql-params"
+
+          echo "=== Secrets Manager ==="
+          for SECRET in "prod/ghost/rds/master-password" "prod/ghost/rds/app-password"; do
+            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET" \
+              --query 'ARN' --output text 2>/dev/null || echo "")
+            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ]; then
+              case "$SECRET" in
+                *master*) tf_import "module.ghost_db.aws_secretsmanager_secret.rds_password" "$SECRET_ARN" ;;
+                *app*)    tf_import "module.ghost_db.aws_secretsmanager_secret.app_user_password" "$SECRET_ARN" ;;
+              esac
             fi
-          fi
+          done
+
+          echo "=== SSM Parameters ==="
+          for PARAM in "/prod/ghost/db/name" "/prod/ghost/db/master-user" "/prod/ghost/db/app-user"; do
+            PARAM_EXISTS=$(aws ssm get-parameter --name "$PARAM" \
+              --query 'Parameter.Name' --output text 2>/dev/null || echo "")
+            if [ -n "$PARAM_EXISTS" ] && [ "$PARAM_EXISTS" != "None" ]; then
+              case "$PARAM" in
+                */name)        tf_import "module.ghost_db.aws_ssm_parameter.db_name" "$PARAM" ;;
+                */master-user) tf_import "module.ghost_db.aws_ssm_parameter.db_master_user" "$PARAM" ;;
+                */app-user)    tf_import "module.ghost_db.aws_ssm_parameter.db_app_user" "$PARAM" ;;
+              esac
+            fi
+          done
+
+          echo "=== CloudWatch Log Groups ==="
+          CW_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/vpc/prod-flow-logs" \
+            --query 'length(logGroups)' --output text 2>/dev/null || echo "0")
+          [ "$CW_EXISTS" = "1" ] && \
+            tf_import "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]" "/aws/vpc/prod-flow-logs"
+
+          echo "=== Reconcile complete ==="
 
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan -lock-timeout=5m
