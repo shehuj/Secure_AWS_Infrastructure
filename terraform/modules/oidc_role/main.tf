@@ -164,7 +164,8 @@ data "aws_iam_policy_document" "terraform_compute" {
       "elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags", "elasticloadbalancing:DescribeTags",
       "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets",
       "elasticloadbalancing:SetIpAddressType",
-      "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:DescribeListenerCertificates"
+      "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:DescribeListenerCertificates",
+      "elasticloadbalancing:DescribeListenerAttributes", "elasticloadbalancing:ModifyListenerAttributes"
     ]
     resources = ["*"]
   }
@@ -197,7 +198,9 @@ data "aws_iam_policy_document" "terraform_data" {
       "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret",
       "secretsmanager:RestoreSecret", "secretsmanager:ListSecrets",
       "secretsmanager:TagResource", "secretsmanager:UntagResource",
-      "secretsmanager:ListSecretVersionIds"
+      "secretsmanager:ListSecretVersionIds",
+      "secretsmanager:GetResourcePolicy", "secretsmanager:PutResourcePolicy",
+      "secretsmanager:DeleteResourcePolicy"
     ]
     resources = ["*"]
   }

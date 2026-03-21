@@ -30,10 +30,38 @@ env:
   TF_VAR_prometheus_retention_days: ${{ secrets.TF_VAR_PROMETHEUS_RETENTION_DAYS }}
 
 jobs:
+  # ── Bootstrap: ensure OIDC role & policies are current ───────────────────────
+  bootstrap-oidc:
+    name: Bootstrap OIDC Role
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.7
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Apply OIDC module
+        run: terraform apply -target=module.github_oidc -auto-approve -input=false -lock-timeout=5m
+
   # ── Terraform ────────────────────────────────────────────────────────────────
   terraform-validate:
     name: Terraform Validate
     runs-on: ubuntu-latest
+    needs: bootstrap-oidc
     defaults:
       run:
         working-directory: ./terraform
