@@ -104,22 +104,6 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Import orphaned resources
-        run: |
-          ENV="${{ secrets.TF_VAR_ENVIRONMENT || 'prod' }}"
-
-          # ASG: may exist from a prior partial apply that lost state
-          ASG_NAME="${ENV}-web-asg"
-          ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names "$ASG_NAME" \
-            --query 'AutoScalingGroups[0].AutoScalingGroupName' \
-            --output text 2>/dev/null || echo "")
-          IN_STATE=$(terraform state list module.alb_asg.aws_autoscaling_group.web 2>/dev/null || echo "")
-          if [ "$ASG_EXISTS" = "$ASG_NAME" ] && [ -z "$IN_STATE" ]; then
-            echo "Importing orphaned ASG: $ASG_NAME"
-            terraform import module.alb_asg.aws_autoscaling_group.web "$ASG_NAME"
-          fi
-
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan -lock-timeout=5m
 
