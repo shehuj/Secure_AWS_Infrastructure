@@ -4,7 +4,3 @@
 # and need to be brought under Terraform management.
 # Remove an import block once the resource is successfully in state.
 
-import {
-  to = module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]
-  id = "/aws/vpc/${var.environment}-flow-logs"
-}
