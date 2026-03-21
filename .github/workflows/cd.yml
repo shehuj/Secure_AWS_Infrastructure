@@ -163,6 +163,20 @@ jobs:
           [ -n "$EC2_POLICY_EXISTS" ] && \
             tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$EC2_POLICY_ARN"
 
+          echo "=== Security Groups ==="
+          for SG_NAME in "prod-alb-sg" "prod-asg-instances-sg" "prod-ghost-rds-sg"; do
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=$SG_NAME" \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+              case "$SG_NAME" in
+                *alb-sg)          tf_import "module.alb_asg.aws_security_group.alb" "$SG_ID" ;;
+                *asg-instances-sg) tf_import "module.alb_asg.aws_security_group.asg_instances" "$SG_ID" ;;
+                *rds-sg)          tf_import "module.ghost_db.aws_security_group.rds" "$SG_ID" ;;
+              esac
+            fi
+          done
+
           echo "=== Target Group ==="
           TG_ARN=$(aws elbv2 describe-target-groups --names "prod-web-tg" \
             --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
@@ -183,11 +197,15 @@ jobs:
             tf_import "module.alb_asg.aws_launch_template.web" "$LT_ID"
 
           echo "=== Auto Scaling Group ==="
-          ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names "prod-web-asg" \
-            --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
-          [ "$ASG_EXISTS" = "1" ] && \
-            tf_import "module.alb_asg.aws_autoscaling_group.web" "prod-web-asg"
+          for ASG_NAME in "prod-webb-asg" "prod-web-asg"; do
+            ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG_NAME" \
+              --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
+            if [ "$ASG_EXISTS" = "1" ]; then
+              tf_import "module.alb_asg.aws_autoscaling_group.web" "$ASG_NAME"
+              break
+            fi
+          done
 
           echo "=== RDS ==="
           tf_import "module.ghost_db.aws_db_subnet_group.ghost" \
