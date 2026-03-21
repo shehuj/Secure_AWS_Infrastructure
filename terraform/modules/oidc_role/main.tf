@@ -164,7 +164,8 @@ data "aws_iam_policy_document" "terraform_compute" {
       "elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags", "elasticloadbalancing:DescribeTags",
       "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets",
       "elasticloadbalancing:SetIpAddressType",
-      "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:DescribeListenerCertificates"
+      "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:DescribeListenerCertificates",
+      "elasticloadbalancing:DescribeListenerAttributes", "elasticloadbalancing:ModifyListenerAttributes"
     ]
     resources = ["*"]
   }
@@ -197,7 +198,9 @@ data "aws_iam_policy_document" "terraform_data" {
       "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret",
       "secretsmanager:RestoreSecret", "secretsmanager:ListSecrets",
       "secretsmanager:TagResource", "secretsmanager:UntagResource",
-      "secretsmanager:ListSecretVersionIds"
+      "secretsmanager:ListSecretVersionIds",
+      "secretsmanager:GetResourcePolicy", "secretsmanager:PutResourcePolicy",
+      "secretsmanager:DeleteResourcePolicy"
     ]
     resources = ["*"]
   }
@@ -409,6 +412,86 @@ resource "aws_iam_role_policy_attachment" "terraform_data" {
 resource "aws_iam_role_policy_attachment" "terraform_monitoring" {
   role       = aws_iam_role.github_actions.name
   policy_arn = aws_iam_policy.terraform_monitoring.arn
+}
+
+# ── Bootstrap IAM user ───────────────────────────────────────────────────────
+# Used only by the bootstrap-oidc CI/CD job to create/update the OIDC provider
+# and this role before OIDC authentication is available.
+# Credentials are stored as AWS_BOOTSTRAP_ACCESS_KEY_ID /
+# AWS_BOOTSTRAP_SECRET_ACCESS_KEY in GitHub Actions secrets.
+resource "aws_iam_user" "bootstrap" {
+  name = "${var.role_name}-bootstrap"
+  tags = {
+    Name      = "${var.role_name}-bootstrap"
+    ManagedBy = "Terraform"
+    Purpose   = "CI bootstrap - creates OIDC provider and GitHub Actions role"
+  }
+}
+
+resource "aws_iam_user_policy" "bootstrap" {
+  name   = "OIDCBootstrap"
+  user   = aws_iam_user.bootstrap.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "STSIdentity"
+        Effect = "Allow"
+        Action = ["sts:GetCallerIdentity"]
+        Resource = "*"
+      },
+      {
+        Sid    = "OIDCProvider"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateOpenIDConnectProvider",
+          "iam:DeleteOpenIDConnectProvider",
+          "iam:GetOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders",
+          "iam:TagOpenIDConnectProvider",
+          "iam:UntagOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviderTags",
+          "iam:UpdateOpenIDConnectProviderThumbprint"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMRoleManagement"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:UpdateRole",
+          "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
+          "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
+          "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+          "iam:TagRole", "iam:UntagRole", "iam:ListRoleTags",
+          "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy",
+          "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
+          "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicies",
+          "iam:TagPolicy", "iam:UntagPolicy"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3StateLock"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:PutObject", "s3:ListBucket",
+          "s3:GetBucketVersioning", "s3:GetBucketAcl",
+          "s3:GetBucketLocation"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DynamoDBStateLock"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:PutItem",
+          "dynamodb:DeleteItem", "dynamodb:DescribeTable"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 # Optional: Attach AWS managed policies

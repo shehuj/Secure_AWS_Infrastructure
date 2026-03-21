@@ -12,3 +12,8 @@ output "oidc_provider_arn" {
   description = "ARN of the GitHub OIDC provider"
   value       = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
+
+output "bootstrap_user_name" {
+  description = "IAM username of the bootstrap user — create an access key for this user and store it as AWS_BOOTSTRAP_ACCESS_KEY_ID / AWS_BOOTSTRAP_SECRET_ACCESS_KEY in GitHub secrets"
+  value       = aws_iam_user.bootstrap.name
+}

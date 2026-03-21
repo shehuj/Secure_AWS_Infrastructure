@@ -1,0 +1,6 @@
+### run this if OIDC is failling to create, 
+
+> terraform apply -target=module.github_oidc
+> terraform taint module.github_oidc.aws_iam_openid_connect_provider.github[0]
+
+### then rerun the pipeline againe.
