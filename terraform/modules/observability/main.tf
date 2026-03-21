@@ -442,6 +442,7 @@ resource "aws_ssm_parameter" "prometheus_config" {
   description = "Prometheus configuration"
   type        = "String"
   tier        = "Advanced"
+  overwrite   = true
   value = templatefile("${path.module}/prometheus.yml.tpl", {
     region             = data.aws_region.current.id
     ecs_cluster_name   = var.ecs_cluster_name

@@ -119,41 +119,46 @@ resource "aws_secretsmanager_secret_version" "app_user_password" {
 
 # SSM Parameters so Ansible (and other services) can discover the DB without hardcoding
 resource "aws_ssm_parameter" "db_host" {
-  name  = "/${var.environment}/ghost/db/host"
-  type  = "String"
-  value = aws_db_instance.ghost.address
+  name      = "/${var.environment}/ghost/db/host"
+  type      = "String"
+  value     = aws_db_instance.ghost.address
+  overwrite = true
 
   tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
 
 resource "aws_ssm_parameter" "db_port" {
-  name  = "/${var.environment}/ghost/db/port"
-  type  = "String"
-  value = tostring(aws_db_instance.ghost.port)
+  name      = "/${var.environment}/ghost/db/port"
+  type      = "String"
+  value     = tostring(aws_db_instance.ghost.port)
+  overwrite = true
 
   tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
 
 resource "aws_ssm_parameter" "db_name" {
-  name  = "/${var.environment}/ghost/db/name"
-  type  = "String"
-  value = var.database_name
+  name      = "/${var.environment}/ghost/db/name"
+  type      = "String"
+  value     = var.database_name
+  overwrite = true
 
   tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
 
 resource "aws_ssm_parameter" "db_master_user" {
-  name  = "/${var.environment}/ghost/db/master-user"
-  type  = "String"
-  value = var.master_username
+  name      = "/${var.environment}/ghost/db/master-user"
+  type      = "String"
+  value     = var.master_username
+  overwrite = true
 
   tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
 
 resource "aws_ssm_parameter" "db_app_user" {
-  name  = "/${var.environment}/ghost/db/app-user"
-  type  = "String"
-  value = var.app_username
+  name      = "/${var.environment}/ghost/db/app-user"
+  type      = "String"
+  value     = var.app_username
+  overwrite = true
 
   tags = merge({ Environment = var.environment, ManagedBy = "Terraform" }, var.tags)
 }
