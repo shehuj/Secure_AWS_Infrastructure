@@ -117,6 +117,8 @@ data "aws_iam_policy_document" "terraform_compute" {
       "iam:TagRole", "iam:UntagRole",
       "iam:GetInstanceProfile", "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
       "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile", "iam:UntagInstanceProfile", "iam:ListInstanceProfileTags",
+      "iam:ListInstanceProfiles", "iam:ListInstanceProfilesForRole",
       "iam:PassRole",
       "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
       "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
@@ -367,6 +369,7 @@ data "aws_iam_policy_document" "terraform_monitoring" {
     effect = "Allow"
     actions = [
       "route53:GetHostedZone", "route53:ListHostedZones", "route53:ListHostedZonesByName",
+      "route53:CreateHostedZone", "route53:DeleteHostedZone",
       "route53:ChangeResourceRecordSets", "route53:GetChange",
       "route53:ListResourceRecordSets", "route53:ListTagsForResource",
       "route53:ChangeTagsForResource"
