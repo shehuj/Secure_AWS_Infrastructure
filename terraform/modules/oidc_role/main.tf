@@ -424,7 +424,7 @@ resource "aws_iam_user" "bootstrap" {
   tags = {
     Name      = "${var.role_name}-bootstrap"
     ManagedBy = "Terraform"
-    Purpose   = "CI bootstrap — creates OIDC provider and GitHub Actions role"
+    Purpose   = "CI bootstrap - creates OIDC provider and GitHub Actions role"
   }
 }
 
