@@ -103,11 +103,40 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Reconcile ASG state
+      - name: Clear orphaned ASG and launch template
         run: |
-          # If the ASG exists in AWS but not in Terraform state, import it.
-          # If it doesn't exist, this is a no-op and Terraform will create it.
-          terraform import module.alb_asg.aws_autoscaling_group.web prod-web-asg 2>&1 || true
+          ASG_NAME="prod-web-asg"
+          LT_PREFIX="prod-web-"
+
+          # ── ASG ──────────────────────────────────────────────────────────────
+          ASG_EXISTS=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names "$ASG_NAME" \
+            --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
+          ASG_IN_STATE=$(terraform state list module.alb_asg.aws_autoscaling_group.web 2>/dev/null || echo "")
+
+          if [ "$ASG_EXISTS" = "1" ] && [ -z "$ASG_IN_STATE" ]; then
+            echo "Deleting orphaned ASG: $ASG_NAME"
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG_NAME" --min-size 0 --desired-capacity 0 2>/dev/null || true
+            aws autoscaling delete-auto-scaling-group \
+              --auto-scaling-group-name "$ASG_NAME" --force-delete
+            aws autoscaling wait group-not-exists \
+              --auto-scaling-group-names "$ASG_NAME" 2>/dev/null || sleep 45
+            echo "ASG deleted."
+          fi
+
+          # ── Launch Template ───────────────────────────────────────────────────
+          LT_IN_STATE=$(terraform state list module.alb_asg.aws_launch_template.web 2>/dev/null || echo "")
+
+          if [ -z "$LT_IN_STATE" ]; then
+            LT_IDS=$(aws ec2 describe-launch-templates \
+              --filters "Name=launch-template-name,Values=${LT_PREFIX}*" \
+              --query 'LaunchTemplates[].LaunchTemplateId' --output text 2>/dev/null || echo "")
+            for LT_ID in $LT_IDS; do
+              echo "Deleting orphaned launch template: $LT_ID"
+              aws ec2 delete-launch-template --launch-template-id "$LT_ID" 2>/dev/null || true
+            done
+          fi
 
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan -lock-timeout=5m
