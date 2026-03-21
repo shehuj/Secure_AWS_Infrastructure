@@ -273,10 +273,18 @@ jobs:
           done
 
           echo "=== ECS Cluster ==="
-          CLUSTER_ARN=$(aws ecs describe-clusters --clusters "prod-ghost-cluster" \
-            --query 'clusters[?status==`ACTIVE`].clusterArn' --output text 2>/dev/null || echo "")
-          [ -n "$CLUSTER_ARN" ] && [ "$CLUSTER_ARN" != "None" ] && \
-            tf_import "module.ghost_blog.aws_ecs_cluster.ghost" "$CLUSTER_ARN"
+          # aws_ecs_cluster imports by cluster NAME (not ARN) — Terraform builds the ARN internally
+          # First remove any bad state entry with a doubled ARN, then re-import by name
+          BAD_ID=$(terraform state show "module.ghost_blog.aws_ecs_cluster.ghost" 2>/dev/null \
+            | grep '^ *id ' | awk '{print $3}' | tr -d '"')
+          if echo "$BAD_ID" | grep -q 'cluster/arn:'; then
+            echo "  Removing bad ECS cluster state entry (doubled ARN): $BAD_ID"
+            terraform state rm "module.ghost_blog.aws_ecs_cluster.ghost" 2>/dev/null || true
+          fi
+          CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters "prod-ghost-cluster" \
+            --query 'length(clusters[?status==`ACTIVE`])' --output text 2>/dev/null || echo "0")
+          [ "$CLUSTER_EXISTS" = "1" ] && \
+            tf_import "module.ghost_blog.aws_ecs_cluster.ghost" "prod-ghost-cluster"
 
           echo "=== ECS Services ==="
           for SVC in "prod-ghost-service" "prod-prometheus-service" "prod-grafana-service" \
