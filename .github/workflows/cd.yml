@@ -119,11 +119,42 @@ jobs:
             fi
           }
 
+          echo "=== VPC ==="
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=prod-vpc" \
+            --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+          [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ] && \
+            tf_import "module.vpc.aws_vpc.main" "$VPC_ID"
+
+          echo "=== Subnets ==="
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            IDX=0
+            for SN_ID in $(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Tier,Values=Public" \
+              --query 'Subnets[].SubnetId' --output text 2>/dev/null); do
+              tf_import "module.vpc.aws_subnet.public[$IDX]" "$SN_ID"
+              IDX=$((IDX+1))
+            done
+            IDX=0
+            for SN_ID in $(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Tier,Values=Private" \
+              --query 'Subnets[].SubnetId' --output text 2>/dev/null); do
+              tf_import "module.vpc.aws_subnet.private[$IDX]" "$SN_ID"
+              IDX=$((IDX+1))
+            done
+          fi
+
           echo "=== IAM Roles ==="
           tf_import "module.alb_asg.aws_iam_role.ec2" \
             "prod-asg-ec2-role"
           tf_import "module.vpc.aws_iam_role.vpc_flow_logs[0]" \
             "prod-vpc-flow-logs-role"
+
+          echo "=== IAM Instance Profile ==="
+          IP_EXISTS=$(aws iam get-instance-profile --instance-profile-name "prod-asg-instance-profile" \
+            --query 'InstanceProfile.InstanceProfileName' --output text 2>/dev/null || echo "")
+          [ -n "$IP_EXISTS" ] && [ "$IP_EXISTS" != "None" ] && \
+            tf_import "module.alb_asg.aws_iam_instance_profile.ec2" "prod-asg-instance-profile"
 
           echo "=== IAM Policies ==="
           EC2_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/prod-asg-ec2-custom-policy"
@@ -132,17 +163,17 @@ jobs:
           [ -n "$EC2_POLICY_EXISTS" ] && \
             tf_import "module.alb_asg.aws_iam_policy.ec2_custom" "$EC2_POLICY_ARN"
 
-          echo "=== ALB ==="
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names "prod-alb" \
-            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-          [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && \
-            tf_import "module.alb_asg.aws_lb.main" "$ALB_ARN"
-
           echo "=== Target Group ==="
           TG_ARN=$(aws elbv2 describe-target-groups --names "prod-web-tg" \
             --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
           [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ] && \
             tf_import "module.alb_asg.aws_lb_target_group.web" "$TG_ARN"
+
+          echo "=== ALB ==="
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "prod-alb" \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+          [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ] && \
+            tf_import "module.alb_asg.aws_lb.main" "$ALB_ARN"
 
           echo "=== Launch Template ==="
           LT_ID=$(aws ec2 describe-launch-templates \
