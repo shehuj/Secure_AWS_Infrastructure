@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: ./terraform/bootstrap
     steps:
       - uses: actions/checkout@v4
 
@@ -59,8 +59,8 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Apply OIDC module
-        run: terraform apply -target=module.github_oidc -auto-approve -input=false -lock-timeout=5m
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false -lock-timeout=5m
 
   # ── Terraform ────────────────────────────────────────────────────────────────
   terraform-validate:
