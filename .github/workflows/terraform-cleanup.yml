@@ -378,6 +378,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Disable prevent_destroy for teardown
+        run: |
+          sed -i 's/prevent_destroy = true/prevent_destroy = false/g' \
+            terraform/modules/vpc/main.tf
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -446,6 +451,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Disable prevent_destroy for teardown
+        run: |
+          sed -i 's/prevent_destroy = true/prevent_destroy = false/g' \
+            terraform/modules/vpc/main.tf
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
