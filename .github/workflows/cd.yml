@@ -146,13 +146,19 @@ jobs:
             return 0
           }
 
-          # Helper: import a target group by name
+          # Helper: import a target group by name.
+          # Always removes any stale state entry before importing so that a previous
+          # run's bad state (wrong ARN, wrong attributes) can never trigger a ForceNew
+          # replacement on the next plan.
           tg_import() {
             local addr="$1" tg_name="$2"
             local TG_ARN
             TG_ARN=$(aws elbv2 describe-target-groups --names "$tg_name" \
               --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
-            if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then tf_import "$addr" "$TG_ARN"; fi
+            if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+              terraform state rm "$addr" 2>/dev/null || true
+              tf_import "$addr" "$TG_ARN"
+            fi
             return 0
           }
 
@@ -186,7 +192,9 @@ jobs:
             return 0
           }
 
-          # Helper: import an ALB listener by ALB name + port
+          # Helper: import an ALB listener by ALB name + port.
+          # Always force-reimports (removes stale state) so the plan always knows the
+          # correct listener→TG association and can sequence TG deletes after listener updates.
           listener_import() {
             local addr="$1" alb_name="$2" port="$3"
             local ALB_ARN LISTENER_ARN
@@ -196,6 +204,7 @@ jobs:
               LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
                 --query "Listeners[?Port==\`$port\`].ListenerArn" --output text 2>/dev/null || echo "")
               if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
+                terraform state rm "$addr" 2>/dev/null || true
                 tf_import "$addr" "$LISTENER_ARN"
               fi
             fi
@@ -463,7 +472,71 @@ jobs:
       - name: Terraform Apply
         run: |
           if ! terraform apply -input=false -lock-timeout=5m tfplan; then
-            echo "Saved plan stale — re-planning and applying..."
+            echo "Apply failed — re-importing critical resources before fresh plan..."
+            set +e
+
+            # Re-import TGs: a failed apply can leave TG state entries stale or missing.
+            # Force-reimport ensures the fresh plan sees state that matches AWS exactly,
+            # so no ForceNew replacement is triggered.
+            for PAIR in \
+              "module.alb_asg.aws_lb_target_group.web:prod-web-tg" \
+              "module.ghost_blog.aws_lb_target_group.ghost:prod-ghost-tg" \
+              "module.observability[0].aws_lb_target_group.grafana:prod-grafana-tg" \
+              "module.observability[0].aws_lb_target_group.prometheus:prod-prometheus-tg"; do
+              ADDR="${PAIR%%:*}"; TG="${PAIR##*:}"
+              TG_ARN=$(aws elbv2 describe-target-groups --names "$TG" \
+                --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+              if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+                terraform state rm "$ADDR" 2>/dev/null || true
+                terraform import "$ADDR" "$TG_ARN" 2>&1 || true
+              fi
+            done
+
+            # Re-import listeners so the fresh plan knows the correct listener→TG
+            # relationships and sequences any TG deletes after listener updates.
+            _reimport_listener() {
+              local addr="$1" alb="$2" port="$3"
+              local alb_arn lis_arn
+              alb_arn=$(aws elbv2 describe-load-balancers --names "$alb" \
+                --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+              [ -z "$alb_arn" ] || [ "$alb_arn" = "None" ] && return 0
+              lis_arn=$(aws elbv2 describe-listeners --load-balancer-arn "$alb_arn" \
+                --query "Listeners[?Port==\`$port\`].ListenerArn" --output text 2>/dev/null || echo "")
+              [ -n "$lis_arn" ] && [ "$lis_arn" != "None" ] && {
+                terraform state rm "$addr" 2>/dev/null || true
+                terraform import "$addr" "$lis_arn" 2>&1 || true
+              }
+              return 0
+            }
+            _reimport_listener "module.alb_asg.aws_lb_listener.https"                        "prod-alb"         443
+            _reimport_listener "module.alb_asg.aws_lb_listener.http"                         "prod-alb"         80
+            _reimport_listener "module.ghost_blog.aws_lb_listener.ghost_https"               "prod-ghost-alb"   443
+            _reimport_listener "module.ghost_blog.aws_lb_listener.ghost_http"                "prod-ghost-alb"   80
+            _reimport_listener "module.observability[0].aws_lb_listener.grafana_https"       "prod-grafana-alb" 443
+            _reimport_listener "module.observability[0].aws_lb_listener.grafana_http"        "prod-grafana-alb" 80
+            _reimport_listener "module.observability[0].aws_lb_listener.prometheus"          "prod-grafana-alb" 9090
+
+            # Re-import the two SGs that have caused DependencyViolation / SetSecurityGroups
+            # errors so the fresh plan has the correct SG IDs and ignore_changes takes effect.
+            _reimport_sg() {
+              local addr="$1" sg_name="$2" vpc_id="$3"
+              local sg_id
+              sg_id=$(aws ec2 describe-security-groups \
+                --filters "Name=group-name,Values=$sg_name" "Name=vpc-id,Values=$vpc_id" \
+                --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+              [ -n "$sg_id" ] && [ "$sg_id" != "None" ] && {
+                terraform state rm "$addr" 2>/dev/null || true
+                terraform import "$addr" "$sg_id" 2>&1 || true
+              }
+              return 0
+            }
+            VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
+              --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
+            if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+              _reimport_sg "module.alb_asg.aws_security_group.alb"                       "prod-alb-sg"          "$VPC_ID"
+              _reimport_sg "module.observability[0].aws_security_group.monitoring_efs"   "prod-monitoring-efs-sg" "$VPC_ID"
+            fi
+
             terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m
             terraform apply -input=false -lock-timeout=5m tfplan-fresh
           fi
