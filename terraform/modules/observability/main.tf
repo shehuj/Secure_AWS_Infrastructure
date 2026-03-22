@@ -707,7 +707,7 @@ resource "aws_lb" "grafana" {
 
 # Target Group for Grafana
 resource "aws_lb_target_group" "grafana" {
-  name_prefix = "gfna-"
+  name        = "${var.environment}-grafana-tg"
   port        = 3000
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
@@ -733,10 +733,6 @@ resource "aws_lb_target_group" "grafana" {
     },
     var.tags
   )
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 # HTTPS Listener for Grafana ALB
@@ -790,7 +786,7 @@ resource "aws_lb_listener" "grafana_http" {
 
 # Target Group for Prometheus
 resource "aws_lb_target_group" "prometheus" {
-  name_prefix = "prom-"
+  name        = "${var.environment}-prometheus-tg"
   port        = 9090
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
@@ -816,10 +812,6 @@ resource "aws_lb_target_group" "prometheus" {
     },
     var.tags
   )
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 # Prometheus listener on port 9090 (restricted by ALB security group CIDRs)

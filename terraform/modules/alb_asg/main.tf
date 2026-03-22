@@ -323,10 +323,10 @@ resource "aws_lb" "main" {
 
 # Target Group
 resource "aws_lb_target_group" "web" {
-  name_prefix = "web-"
-  port        = 80
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
+  name     = "${var.environment}-web-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = var.vpc_id
 
   health_check {
     enabled             = true
@@ -354,10 +354,6 @@ resource "aws_lb_target_group" "web" {
     },
     var.tags
   )
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 # HTTPS Listener
