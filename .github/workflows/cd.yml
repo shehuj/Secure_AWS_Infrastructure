@@ -186,6 +186,41 @@ jobs:
             return 0
           }
 
+          # Helper: import an ALB listener by ALB name + port
+          listener_import() {
+            local addr="$1" alb_name="$2" port="$3"
+            local ALB_ARN LISTENER_ARN
+            ALB_ARN=$(aws elbv2 describe-load-balancers --names "$alb_name" \
+              --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+            if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+              LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
+                --query "Listeners[?Port==\`$port\`].ListenerArn" --output text 2>/dev/null || echo "")
+              if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
+                tf_import "$addr" "$LISTENER_ARN"
+              fi
+            fi
+            return 0
+          }
+
+          # Helper: import EFS mount targets for a given EFS creation token
+          # Imports all mount targets ordered by subnet ID (matches Terraform count.index ordering)
+          efs_mt_import() {
+            local base_addr="$1" creation_token="$2"
+            local EFS_ID IDX MT_ID
+            EFS_ID=$(aws efs describe-file-systems --creation-token "$creation_token" \
+              --query 'FileSystems[0].FileSystemId' --output text 2>/dev/null || echo "")
+            if [ -n "$EFS_ID" ] && [ "$EFS_ID" != "None" ]; then
+              IDX=0
+              for MT_ID in $(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
+                --query 'sort_by(MountTargets,&SubnetId)[].MountTargetId' \
+                --output text 2>/dev/null); do
+                tf_import "${base_addr}[$IDX]" "$MT_ID"
+                IDX=$((IDX+1))
+              done
+            fi
+            return 0
+          }
+
           echo "=== VPC (derived from existing ALB) ==="
           ALB_VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
             --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
@@ -369,6 +404,22 @@ jobs:
               esac
             fi
           done
+
+          echo "=== EFS Mount Targets ==="
+          # Mount targets must be in state so Terraform can destroy them before their SGs
+          efs_mt_import "module.ghost_blog.aws_efs_mount_target.ghost"                  "prod-ghost-efs"
+          efs_mt_import "module.observability[0].aws_efs_mount_target.prometheus"       "prod-prometheus-efs"
+          efs_mt_import "module.observability[0].aws_efs_mount_target.grafana"          "prod-grafana-efs"
+
+          echo "=== ALB Listeners ==="
+          # Listeners must be in state so Terraform destroys them before their target groups
+          listener_import "module.alb_asg.aws_lb_listener.https"                        "prod-alb"         443
+          listener_import "module.alb_asg.aws_lb_listener.http"                         "prod-alb"         80
+          listener_import "module.ghost_blog.aws_lb_listener.ghost_https"               "prod-ghost-alb"   443
+          listener_import "module.ghost_blog.aws_lb_listener.ghost_http"                "prod-ghost-alb"   80
+          listener_import "module.observability[0].aws_lb_listener.grafana_https"       "prod-grafana-alb" 443
+          listener_import "module.observability[0].aws_lb_listener.grafana_http"        "prod-grafana-alb" 80
+          listener_import "module.observability[0].aws_lb_listener.prometheus"          "prod-grafana-alb" 9090
 
           echo "=== Route53 Records ==="
           ZONE_ID="${TF_VAR_route53_zone_id}"
