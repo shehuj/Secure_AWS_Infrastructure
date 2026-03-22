@@ -303,7 +303,16 @@ jobs:
           echo "=== Security Groups (observability) ==="
           sg_import "module.observability[0].aws_security_group.grafana_alb"      "prod-grafana-alb-sg"      "$VPC_ID"
           sg_import "module.observability[0].aws_security_group.monitoring_tasks"  "prod-monitoring-tasks-sg" "$VPC_ID"
-          sg_import "module.observability[0].aws_security_group.monitoring_efs"    "prod-monitoring-efs-sg"   "$VPC_ID"
+          # Force-reimport monitoring_efs SG every run: stale state (wrong ID/attributes)
+          # causes Terraform to plan a replacement; the old SG then can't be deleted because
+          # EFS mount targets are still attached to it (DependencyViolation).
+          SG_EFS_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=prod-monitoring-efs-sg" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          if [ -n "$SG_EFS_ID" ] && [ "$SG_EFS_ID" != "None" ]; then
+            terraform state rm "module.observability[0].aws_security_group.monitoring_efs" 2>/dev/null || true
+            tf_import "module.observability[0].aws_security_group.monitoring_efs" "$SG_EFS_ID"
+          fi
 
           echo "=== Target Groups ==="
           tg_import "module.alb_asg.aws_lb_target_group.web"                 "prod-web-tg"
@@ -516,8 +525,9 @@ jobs:
             _reimport_listener "module.observability[0].aws_lb_listener.grafana_http"        "prod-grafana-alb" 80
             _reimport_listener "module.observability[0].aws_lb_listener.prometheus"          "prod-grafana-alb" 9090
 
-            # Re-import the two SGs that have caused DependencyViolation / SetSecurityGroups
-            # errors so the fresh plan has the correct SG IDs and ignore_changes takes effect.
+            # Re-import SGs + CW log groups lost during the failed partial apply.
+            # Stale/missing state entries cause ForceNew replacements (SGs) or
+            # ResourceAlreadyExists errors (log groups) on the fresh plan.
             _reimport_sg() {
               local addr="$1" sg_name="$2" vpc_id="$3"
               local sg_id
@@ -530,12 +540,25 @@ jobs:
               }
               return 0
             }
+            _reimport_cw() {
+              local addr="$1" name="$2"
+              local count
+              count=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
+                --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
+              [ "$count" = "1" ] && {
+                terraform state rm "$addr" 2>/dev/null || true
+                terraform import "$addr" "$name" 2>&1 || true
+              }
+              return 0
+            }
             VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
               --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
             if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-              _reimport_sg "module.alb_asg.aws_security_group.alb"                       "prod-alb-sg"          "$VPC_ID"
+              _reimport_sg "module.alb_asg.aws_security_group.alb"                       "prod-alb-sg"            "$VPC_ID"
               _reimport_sg "module.observability[0].aws_security_group.monitoring_efs"   "prod-monitoring-efs-sg" "$VPC_ID"
             fi
+            _reimport_cw "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]" "/aws/vpc/prod-flow-logs"
+            _reimport_cw "module.ghost_blog.aws_cloudwatch_log_group.ghost"     "/ecs/prod/ghost"
 
             terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m
             terraform apply -input=false -lock-timeout=5m tfplan-fresh
