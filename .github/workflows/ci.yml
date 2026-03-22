@@ -87,7 +87,7 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform Format Check
-        run: terraform fmt -recursive
+        run: terraform fmt -check -recursive
 
       - name: Terraform Validate
         run: terraform validate

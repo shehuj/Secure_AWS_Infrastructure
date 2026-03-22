@@ -1,31 +1,16 @@
-# Route 53 Configuration
-route53_zone_id = "Z04492601HFUDC7HTYJ6B" # claudiq.com hosted zone
-
-# ACM Certificate (used for ALB HTTPS listeners)
-acm_certificate_arn = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
-
 # EC2 root volume size - must be >= 30GB to satisfy AMI snapshot requirement
 root_volume_size = 30
 
-# Observability Configuration
-# SECURITY: All sensitive values must be passed via environment variables or AWS Secrets Manager
-# DO NOT commit secrets to this file
-
-enable_observability = true
-ghost_domain_name    = "claudiq.com"
-grafana_domain_name  = "grafana.claudiq.com"
+# Observability
+enable_observability      = true
+prometheus_retention_days = 15
 
 # Grafana admin password is stored in AWS Secrets Manager.
 # Set this to the secret name (path) in Secrets Manager.
 grafana_admin_password_secret_name = "/prod/grafana/admin-password"
 
-grafana_certificate_arn = "arn:aws:acm:us-east-1:615299732970:certificate/6025f24f-a812-41d9-b97a-cce0f4d4426b"
-
-
-prometheus_retention_days = 15
-# All variables are injected via GitHub Secrets as TF_VAR_* environment variables.
-# See .github/workflows/terraform-plan.yml, terraform-apply.yml, terraform-cleanup.yml.
-#
-# For local development, copy terraform.tfvars.example and fill in your values:
-#   cp terraform.tfvars.example terraform.tfvars.local
-#   terraform plan -var-file=terraform.tfvars.local
+# All other variables (route53_zone_id, acm_certificate_arn, grafana_certificate_arn,
+# ghost_domain_name, grafana_domain_name) are injected via GitHub Secrets as
+# TF_VAR_* environment variables and must NOT be committed here.
+# For local development, set them via environment variables or a local-only tfvars file
+# that is listed in .gitignore.

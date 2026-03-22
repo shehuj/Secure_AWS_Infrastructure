@@ -27,7 +27,7 @@ module "alb_asg" {
   max_size                    = 3
   certificate_arn             = var.acm_certificate_arn
   health_check_path           = "/health"
-  enable_deletion_protection  = false
+  enable_deletion_protection  = true
   enable_stickiness           = false
   root_volume_size            = var.root_volume_size
   root_volume_type            = var.root_volume_type
@@ -74,10 +74,10 @@ module "ghost_db" {
   # Cost-appropriate defaults for a blog (override in tfvars for production HA)
   instance_class              = var.db_instance_class
   multi_az                    = var.db_multi_az
-  deletion_protection         = false
-  final_snapshot_enabled      = false
-  enable_performance_insights = false
-  monitoring_interval         = 0
+  deletion_protection         = true
+  final_snapshot_enabled      = true
+  enable_performance_insights = true
+  monitoring_interval         = 60
 
   tags = var.tags
 }
@@ -96,7 +96,7 @@ module "ghost_blog" {
   cpu                        = 512
   memory                     = 1024
   log_retention_days         = var.log_retention_days
-  enable_deletion_protection = false
+  enable_deletion_protection = true
   route53_zone_id            = var.route53_zone_id
 
   # MySQL database — app user created by Ansible (ghost_db.yml), not master user

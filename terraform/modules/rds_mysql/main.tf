@@ -74,7 +74,7 @@ resource "random_password" "rds_password" {
 resource "aws_secretsmanager_secret" "rds_password" {
   name                    = "${var.environment}/ghost/rds/master-password"
   description             = "Master password for Ghost RDS MySQL instance - used by Ansible for DB provisioning"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
 
   tags = merge(
     {
@@ -100,7 +100,7 @@ resource "random_password" "app_user_password" {
 resource "aws_secretsmanager_secret" "app_user_password" {
   name                    = "${var.environment}/ghost/rds/app-password"
   description             = "Ghost application user password - injected into Ghost ECS tasks"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
 
   tags = merge(
     {
