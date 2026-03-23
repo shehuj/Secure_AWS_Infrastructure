@@ -30,6 +30,15 @@ resource "aws_db_subnet_group" "ghost" {
     },
     var.tags
   )
+
+  lifecycle {
+    # subnet_ids in a DB subnet group are bound to the VPC at creation time.
+    # AWS rejects any ModifyDBSubnetGroup that introduces subnets from a different
+    # VPC (e.g., after VPC recreation). Since RDS instances cannot change VPCs,
+    # the subnet set is effectively immutable — ignore drift to prevent failed
+    # apply attempts when state and AWS temporarily diverge after partial deploys.
+    ignore_changes = [subnet_ids]
+  }
 }
 
 # Security Group for RDS

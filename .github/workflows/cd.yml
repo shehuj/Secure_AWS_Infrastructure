@@ -124,15 +124,29 @@ jobs:
             return 0
           }
 
-          # Helper: import a CloudWatch log group if it exists in AWS
+          # Helper: import a CloudWatch log group if it exists in AWS and is not in state.
+          # Non-destructive: skips if already in state to avoid excessive S3 state lock churn.
           cw_import() {
+            local addr="$1" name="$2"
+            local COUNT
+            COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
+              --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
+            if [ "$COUNT" = "1" ]; then tf_import "$addr" "$name"; fi
+            return 0
+          }
+
+          # Helper: force-reimport a CloudWatch log group (state rm + import) regardless of
+          # current state. Use for log groups that persistently fail with ResourceAlreadyExists
+          # because a stale state entry survives plan refresh as a "not found" resource.
+          cw_force_import() {
             local addr="$1" name="$2"
             local COUNT
             COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
               --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
             if [ "$COUNT" = "1" ]; then
               terraform state rm "$addr" 2>/dev/null || true
-              tf_import "$addr" "$name"
+              terraform import "$addr" "$name" 2>&1 \
+                || echo "  WARN: force-reimport failed for $addr — will retry on next run"
             fi
             return 0
           }
@@ -585,7 +599,7 @@ jobs:
           fi
 
           echo "=== CloudWatch Log Groups ==="
-          cw_import "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]"                     "/aws/vpc/prod-flow-logs"
+          cw_force_import "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]"               "/aws/vpc/prod-flow-logs"
           cw_import "module.ghost_blog.aws_cloudwatch_log_group.ghost"                         "/ecs/prod/ghost"
           cw_import "module.monitoring.aws_cloudwatch_log_group.nginx_access"                  "/aws/ec2/prod/nginx/access"
           cw_import "module.monitoring.aws_cloudwatch_log_group.nginx_error"                   "/aws/ec2/prod/nginx/error"
