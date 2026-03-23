@@ -202,10 +202,15 @@ jobs:
           # Helper: import a Secrets Manager secret by name
           secret_import() {
             local addr="$1" secret_name="$2"
-            local SECRET_ARN
+            local SECRET_ARN DELETED_DATE
             SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
               --query 'ARN' --output text 2>/dev/null || echo "")
-            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ]; then tf_import "$addr" "$SECRET_ARN"; fi
+            DELETED_DATE=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
+              --query 'DeletedDate' --output text 2>/dev/null || echo "None")
+            # Skip secrets that are PENDING_DELETION — Terraform provider treats them as non-existent
+            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && [ "$DELETED_DATE" = "None" ]; then
+              tf_import "$addr" "$SECRET_ARN"
+            fi
             return 0
           }
 
