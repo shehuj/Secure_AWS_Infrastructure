@@ -749,8 +749,16 @@ jobs:
             --query "Namespaces[?Name=='prod.local'].Id | [0]" \
             --output text 2>/dev/null || echo "")
           if [ -n "$SD_NS_ID" ] && [ "$SD_NS_ID" != "None" ]; then
-            tf_import "module.observability[0].aws_service_discovery_private_dns_namespace.monitoring" \
-              "$SD_NS_ID"
+            # aws_service_discovery_private_dns_namespace import requires NAMESPACE_ID:VPC_ID
+            SD_NS_VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=${ENV}-vpc" \
+              --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+            if [ -n "$SD_NS_VPC_ID" ] && [ "$SD_NS_VPC_ID" != "None" ]; then
+              tf_import "module.observability[0].aws_service_discovery_private_dns_namespace.monitoring" \
+                "${SD_NS_ID}:${SD_NS_VPC_ID}"
+            else
+              echo "WARN: could not resolve VPC ID for namespace $SD_NS_ID — skipping namespace import"
+            fi
             SD_SVC_ID=$(aws servicediscovery list-services \
               --query "Services[?Name=='prometheus'].Id | [0]" \
               --output text 2>/dev/null || echo "")
