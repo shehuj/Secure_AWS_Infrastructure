@@ -130,7 +130,10 @@ jobs:
             local COUNT
             COUNT=$(aws logs describe-log-groups --log-group-name-prefix "$name" \
               --query "length(logGroups[?logGroupName=='$name'])" --output text 2>/dev/null || echo "0")
-            if [ "$COUNT" = "1" ]; then tf_import "$addr" "$name"; fi
+            if [ "$COUNT" = "1" ]; then
+              terraform state rm "$addr" 2>/dev/null || true
+              tf_import "$addr" "$name"
+            fi
             return 0
           }
 
@@ -500,6 +503,10 @@ jobs:
           done
 
           echo "=== RDS ==="
+          # Force-reimport: stale state has wrong subnet IDs → Terraform plans update
+          # → AWS rejects "subnets not in same VPC". State rm + import aligns state
+          # with the actual subnet group so no spurious update is ever planned.
+          terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
           tf_import "module.ghost_db.aws_db_subnet_group.ghost"    "prod-ghost-db-subnet-group"
           tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
           RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
