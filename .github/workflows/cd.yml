@@ -230,6 +230,125 @@ jobs:
             return 0
           }
 
+          # Helper: import IAM role policy attachment — format: ROLE_NAME/POLICY_ARN
+          iam_attachment_import() {
+            local addr="$1" role_name="$2" policy_arn="$3"
+            local IS_ATTACHED
+            IS_ATTACHED=$(aws iam list-attached-role-policies --role-name "$role_name" \
+              --query "AttachedPolicies[?PolicyArn=='$policy_arn'].PolicyArn" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$IS_ATTACHED" ] && [ "$IS_ATTACHED" != "None" ]; then
+              tf_import "$addr" "${role_name}/${policy_arn}"
+            fi
+            return 0
+          }
+
+          # Helper: import IAM inline role policy — format: ROLE_NAME:POLICY_NAME
+          iam_inline_import() {
+            local addr="$1" role_name="$2" policy_name="$3"
+            local EXISTS
+            EXISTS=$(aws iam get-role-policy --role-name "$role_name" \
+              --policy-name "$policy_name" --query 'PolicyName' --output text 2>/dev/null || echo "")
+            if [ -n "$EXISTS" ] && [ "$EXISTS" != "None" ]; then
+              tf_import "$addr" "${role_name}:${policy_name}"
+            fi
+            return 0
+          }
+
+          # Helper: import local IAM managed policy by name
+          iam_policy_import() {
+            local addr="$1" policy_name="$2"
+            local POLICY_ARN
+            POLICY_ARN=$(aws iam list-policies --scope Local \
+              --query "Policies[?PolicyName=='$policy_name'].Arn" --output text 2>/dev/null || echo "")
+            if [ -n "$POLICY_ARN" ] && [ "$POLICY_ARN" != "None" ]; then
+              tf_import "$addr" "$POLICY_ARN"
+            fi
+            return 0
+          }
+
+          # Helper: import CloudWatch metric alarm by name
+          cw_alarm_import() {
+            local addr="$1" alarm_name="$2"
+            local EXISTS
+            EXISTS=$(aws cloudwatch describe-alarms --alarm-names "$alarm_name" \
+              --query "MetricAlarms[0].AlarmName" --output text 2>/dev/null || echo "")
+            if [ -n "$EXISTS" ] && [ "$EXISTS" != "None" ]; then
+              tf_import "$addr" "$alarm_name"
+            fi
+            return 0
+          }
+
+          # Helper: import latest active ECS task definition revision by family name
+          ecs_taskdef_import() {
+            local addr="$1" family="$2"
+            local TD_ARN
+            TD_ARN=$(aws ecs list-task-definitions --family-prefix "$family" \
+              --sort DESC --status ACTIVE \
+              --query 'taskDefinitionArns[0]' --output text 2>/dev/null || echo "")
+            if [ -n "$TD_ARN" ] && [ "$TD_ARN" != "None" ]; then
+              tf_import "$addr" "$TD_ARN"
+            fi
+            return 0
+          }
+
+          # Helper: import EFS access point (first AP) for a file system (by creation token)
+          efs_ap_import() {
+            local addr="$1" creation_token="$2"
+            local EFS_ID AP_ID
+            EFS_ID=$(aws efs describe-file-systems --creation-token "$creation_token" \
+              --query 'FileSystems[0].FileSystemId' --output text 2>/dev/null || echo "")
+            if [ -n "$EFS_ID" ] && [ "$EFS_ID" != "None" ]; then
+              AP_ID=$(aws efs describe-access-points --file-system-id "$EFS_ID" \
+                --query 'AccessPoints[0].AccessPointId' --output text 2>/dev/null || echo "")
+              if [ -n "$AP_ID" ] && [ "$AP_ID" != "None" ]; then
+                tf_import "$addr" "$AP_ID"
+              fi
+            fi
+            return 0
+          }
+
+          # Helper: import SNS topic by name suffix
+          sns_import() {
+            local addr="$1" topic_name="$2"
+            local TOPIC_ARN
+            TOPIC_ARN=$(aws sns list-topics \
+              --query "Topics[?ends_with(TopicArn, ':$topic_name')].TopicArn | [0]" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$TOPIC_ARN" ] && [ "$TOPIC_ARN" != "None" ]; then
+              tf_import "$addr" "$TOPIC_ARN"
+            fi
+            return 0
+          }
+
+          # Helper: import CloudWatch dashboard by name
+          cw_dashboard_import() {
+            local addr="$1" dashboard_name="$2"
+            local EXISTS
+            EXISTS=$(aws cloudwatch list-dashboards \
+              --query "DashboardEntries[?DashboardName=='$dashboard_name'].DashboardName" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$EXISTS" ] && [ "$EXISTS" != "None" ]; then
+              tf_import "$addr" "$dashboard_name"
+            fi
+            return 0
+          }
+
+          # Helper: import S3 bucket and common sub-resources (public-access-block, SSE, policy, lifecycle)
+          s3_import() {
+            local addr_prefix="$1" bucket_name="$2"
+            local EXISTS
+            EXISTS=$(aws s3api head-bucket --bucket "$bucket_name" 2>/dev/null && echo "yes" || echo "")
+            if [ -n "$EXISTS" ]; then
+              tf_import "${addr_prefix}.aws_s3_bucket.alb_logs"                                 "$bucket_name"
+              tf_import "${addr_prefix}.aws_s3_bucket_public_access_block.alb_logs"             "$bucket_name"
+              tf_import "${addr_prefix}.aws_s3_bucket_server_side_encryption_configuration.alb_logs" "$bucket_name"
+              tf_import "${addr_prefix}.aws_s3_bucket_lifecycle_configuration.alb_logs"         "$bucket_name"
+              tf_import "${addr_prefix}.aws_s3_bucket_policy.alb_logs"                         "$bucket_name"
+            fi
+            return 0
+          }
+
           echo "=== VPC (derived from existing ALB) ==="
           ALB_VPC_ID=$(aws elbv2 describe-load-balancers --names "prod-alb" \
             --query 'LoadBalancers[0].VpcId' --output text 2>/dev/null || echo "")
@@ -472,6 +591,200 @@ jobs:
           cw_import "module.user_analytics[0].aws_cloudwatch_log_group.pageviews"              "/aws/analytics/prod/ghost/pageviews"
           cw_import "module.user_analytics[0].aws_cloudwatch_log_group.engagement"             "/aws/analytics/prod/ghost/engagement"
           cw_import "module.user_analytics[0].aws_cloudwatch_log_group.api_gateway"            "/aws/apigateway/prod/ghost-analytics"
+
+          echo "=== VPC Networking (IGW, NAT gateways, EIPs, Route tables, Flow log) ==="
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            # Internet gateway
+            IGW_ID=$(aws ec2 describe-internet-gateways \
+              --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+              --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || echo "")
+            if [ -n "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              tf_import "module.vpc.aws_internet_gateway.main" "$IGW_ID"
+            fi
+
+            # Default security group (Terraform manages it to remove all rules)
+            DEFAULT_SG_ID=$(aws ec2 describe-security-groups \
+              --filters "Name=group-name,Values=default" "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [ -n "$DEFAULT_SG_ID" ] && [ "$DEFAULT_SG_ID" != "None" ]; then
+              tf_import "module.vpc.aws_default_security_group.default" "$DEFAULT_SG_ID"
+            fi
+
+            # Public route table
+            PUBLIC_RT=$(aws ec2 describe-route-tables \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=prod-public-rt" \
+              --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || echo "")
+            if [ -n "$PUBLIC_RT" ] && [ "$PUBLIC_RT" != "None" ]; then
+              tf_import "module.vpc.aws_route_table.public" "$PUBLIC_RT"
+              tf_import "module.vpc.aws_route.public_internet" "${PUBLIC_RT}_0.0.0.0/0"
+              IDX=0
+              for SN_ID in $(aws ec2 describe-subnets \
+                --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
+                --query 'sort_by(Subnets,&AvailabilityZone)[].SubnetId' --output text 2>/dev/null); do
+                tf_import "module.vpc.aws_route_table_association.public[$IDX]" "$SN_ID/$PUBLIC_RT"
+                IDX=$((IDX+1))
+              done
+            fi
+
+            # Private route tables + associations
+            IDX=0
+            for PVT_RT in $(aws ec2 describe-route-tables \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=prod-private-rt-*" \
+              --query 'sort_by(RouteTables,&Tags[?Key==`Name`].Value|[0])[].RouteTableId' \
+              --output text 2>/dev/null); do
+              tf_import "module.vpc.aws_route_table.private[$IDX]" "$PVT_RT"
+              tf_import "module.vpc.aws_route.private_nat[$IDX]" "${PVT_RT}_0.0.0.0/0"
+              IDX=$((IDX+1))
+            done
+            IDX=0
+            for SN_ID in $(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=false" \
+              --query 'sort_by(Subnets,&AvailabilityZone)[].SubnetId' --output text 2>/dev/null); do
+              RT_ID=$(aws ec2 describe-route-tables \
+                --filters "Name=association.subnet-id,Values=$SN_ID" \
+                --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || echo "")
+              if [ -n "$RT_ID" ] && [ "$RT_ID" != "None" ]; then
+                tf_import "module.vpc.aws_route_table_association.private[$IDX]" "$SN_ID/$RT_ID"
+              fi
+              IDX=$((IDX+1))
+            done
+
+            # NAT gateways + their EIPs
+            IDX=0
+            for NAT_ID in $(aws ec2 describe-nat-gateways \
+              --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" \
+              --query 'sort_by(NatGateways,&SubnetId)[].NatGatewayId' --output text 2>/dev/null); do
+              tf_import "module.vpc.aws_nat_gateway.main[$IDX]" "$NAT_ID"
+              EIP_ALLOC=$(aws ec2 describe-nat-gateways --nat-gateway-ids "$NAT_ID" \
+                --query 'NatGateways[0].NatGatewayAddresses[0].AllocationId' \
+                --output text 2>/dev/null || echo "")
+              if [ -n "$EIP_ALLOC" ] && [ "$EIP_ALLOC" != "None" ]; then
+                tf_import "module.vpc.aws_eip.nat[$IDX]" "$EIP_ALLOC"
+              fi
+              IDX=$((IDX+1))
+            done
+
+            # VPC flow log
+            FLOW_LOG_ID=$(aws ec2 describe-flow-logs \
+              --filter "Name=resource-id,Values=$VPC_ID" \
+              --query 'FlowLogs[0].FlowLogId' --output text 2>/dev/null || echo "")
+            if [ -n "$FLOW_LOG_ID" ] && [ "$FLOW_LOG_ID" != "None" ]; then
+              tf_import "module.vpc.aws_flow_log.main[0]" "$FLOW_LOG_ID"
+            fi
+
+            # VPC flow log IAM inline policy
+            iam_inline_import "module.vpc.aws_iam_role_policy.vpc_flow_logs[0]" \
+              "prod-vpc-flow-logs-role" "prod-vpc-flow-logs-policy"
+          fi
+
+          echo "=== IAM Role Policy Attachments ==="
+          # alb_asg — managed policy attachments
+          iam_attachment_import "module.alb_asg.aws_iam_role_policy_attachment.ssm" \
+            "prod-asg-ec2-role" "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          iam_attachment_import "module.alb_asg.aws_iam_role_policy_attachment.cloudwatch" \
+            "prod-asg-ec2-role" "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+          iam_attachment_import "module.alb_asg.aws_iam_role_policy_attachment.ec2_custom" \
+            "prod-asg-ec2-role" "arn:aws:iam::${ACCOUNT_ID}:policy/prod-asg-ec2-custom-policy"
+          # rds_mysql — enhanced monitoring role + attachment
+          role_import "module.ghost_db.aws_iam_role.rds_monitoring[0]" "prod-ghost-rds-monitoring-role"
+          iam_attachment_import "module.ghost_db.aws_iam_role_policy_attachment.rds_monitoring[0]" \
+            "prod-ghost-rds-monitoring-role" \
+            "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+          # ecs_ghost — execution role attachment + inline policy + custom task policy
+          iam_attachment_import "module.ghost_blog.aws_iam_role_policy_attachment.ecs_task_execution" \
+            "prod-ghost-task-execution-role" \
+            "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          iam_inline_import "module.ghost_blog.aws_iam_role_policy.ecs_task_execution_secrets" \
+            "prod-ghost-task-execution-role" "prod-ghost-execution-secrets"
+          iam_policy_import "module.ghost_blog.aws_iam_policy.ghost_task" "prod-ghost-task-policy"
+          iam_attachment_import "module.ghost_blog.aws_iam_role_policy_attachment.ghost_task" \
+            "prod-ghost-task-role" "arn:aws:iam::${ACCOUNT_ID}:policy/prod-ghost-task-policy"
+          # observability — execution role + prometheus discovery policy
+          iam_attachment_import "module.observability[0].aws_iam_role_policy_attachment.ecs_task_execution" \
+            "prod-monitoring-task-execution-role" \
+            "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          iam_inline_import "module.observability[0].aws_iam_role_policy.ecs_execution_secrets" \
+            "prod-monitoring-task-execution-role" "prod-monitoring-execution-secrets"
+          iam_policy_import "module.observability[0].aws_iam_policy.prometheus_ecs_discovery" \
+            "prod-prometheus-ecs-discovery"
+          iam_attachment_import "module.observability[0].aws_iam_role_policy_attachment.prometheus_ecs_discovery" \
+            "prod-prometheus-task-role" \
+            "arn:aws:iam::${ACCOUNT_ID}:policy/prod-prometheus-ecs-discovery"
+
+          echo "=== ECS Task Definitions ==="
+          ecs_taskdef_import "module.ghost_blog.aws_ecs_task_definition.ghost"                "prod-ghost"
+          ecs_taskdef_import "module.observability[0].aws_ecs_task_definition.prometheus"     "prod-prometheus"
+          ecs_taskdef_import "module.observability[0].aws_ecs_task_definition.grafana"        "prod-grafana"
+          ecs_taskdef_import "module.observability[0].aws_ecs_task_definition.node_exporter"  "prod-node-exporter"
+          ecs_taskdef_import "module.observability[0].aws_ecs_task_definition.mysql_exporter" "prod-mysql-exporter"
+
+          echo "=== EFS Access Points ==="
+          efs_ap_import "module.ghost_blog.aws_efs_access_point.ghost"              "prod-ghost-efs"
+          efs_ap_import "module.observability[0].aws_efs_access_point.prometheus"   "prod-prometheus-efs"
+          efs_ap_import "module.observability[0].aws_efs_access_point.grafana"      "prod-grafana-efs"
+
+          echo "=== Service Discovery ==="
+          SD_NS_ID=$(aws servicediscovery list-namespaces \
+            --query "Namespaces[?Name=='prod.local'].Id | [0]" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$SD_NS_ID" ] && [ "$SD_NS_ID" != "None" ]; then
+            tf_import "module.observability[0].aws_service_discovery_private_dns_namespace.monitoring" \
+              "$SD_NS_ID"
+            SD_SVC_ID=$(aws servicediscovery list-services \
+              --query "Services[?Name=='prometheus'].Id | [0]" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$SD_SVC_ID" ] && [ "$SD_SVC_ID" != "None" ]; then
+              tf_import "module.observability[0].aws_service_discovery_service.prometheus" "$SD_SVC_ID"
+            fi
+          fi
+
+          echo "=== SNS Topics ==="
+          sns_import "module.monitoring.aws_sns_topic.alarms[0]" "prod-infrastructure-alarms"
+
+          echo "=== CloudWatch Metric Alarms ==="
+          cw_alarm_import "module.monitoring.aws_cloudwatch_metric_alarm.asg_cpu_high"              "prod-asg-cpu-high"
+          cw_alarm_import "module.monitoring.aws_cloudwatch_metric_alarm.alb_target_response_time"  "prod-alb-response-time-high"
+          cw_alarm_import "module.monitoring.aws_cloudwatch_metric_alarm.alb_unhealthy_targets"     "prod-alb-unhealthy-targets"
+          cw_alarm_import "module.monitoring.aws_cloudwatch_metric_alarm.ghost_cpu_high"            "prod-ghost-cpu-high"
+          cw_alarm_import "module.monitoring.aws_cloudwatch_metric_alarm.ghost_memory_high[0]"      "prod-ghost-memory-high"
+          cw_alarm_import "module.ghost_db.aws_cloudwatch_metric_alarm.database_cpu"               "prod-ghost-db-cpu-utilization"
+          cw_alarm_import "module.ghost_db.aws_cloudwatch_metric_alarm.database_memory"            "prod-ghost-db-freeable-memory"
+          cw_alarm_import "module.ghost_db.aws_cloudwatch_metric_alarm.database_storage"           "prod-ghost-db-free-storage"
+          cw_alarm_import "module.ghost_db.aws_cloudwatch_metric_alarm.database_connections"       "prod-ghost-db-connections"
+
+          echo "=== CloudWatch Dashboards ==="
+          cw_dashboard_import "module.monitoring.aws_cloudwatch_dashboard.main[0]"  "prod-infrastructure-dashboard"
+
+          echo "=== User Analytics (conditional on S3 bucket existence) ==="
+          UA_BUCKET="prod-ghost-alb-logs-${ACCOUNT_ID}"
+          UA_EXISTS=$(aws s3api head-bucket --bucket "$UA_BUCKET" 2>/dev/null && echo "yes" || echo "")
+          if [ -n "$UA_EXISTS" ]; then
+            s3_import "module.user_analytics[0]" "$UA_BUCKET"
+            # RUM app monitor
+            RUM_EXISTS=$(aws rum list-app-monitors \
+              --query "AppMonitorSummaries[?Name=='prod-ghost-rum'].Name" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$RUM_EXISTS" ] && [ "$RUM_EXISTS" != "None" ]; then
+              tf_import "module.user_analytics[0].aws_rum_app_monitor.ghost" "prod-ghost-rum"
+            fi
+            # Cognito identity pool
+            POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 \
+              --query "IdentityPools[?IdentityPoolName=='prod_ghost_rum'].IdentityPoolId | [0]" \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$POOL_ID" ] && [ "$POOL_ID" != "None" ]; then
+              tf_import "module.user_analytics[0].aws_cognito_identity_pool.rum" "$POOL_ID"
+              tf_import "module.user_analytics[0].aws_cognito_identity_pool_roles_attachment.rum" "$POOL_ID"
+            fi
+            # IAM role + inline policy
+            role_import "module.user_analytics[0].aws_iam_role.rum_guest" "prod-ghost-rum-guest-role"
+            iam_inline_import "module.user_analytics[0].aws_iam_role_policy.rum_guest" \
+              "prod-ghost-rum-guest-role" "rum-access"
+            # CW alarms + dashboard
+            cw_alarm_import "module.user_analytics[0].aws_cloudwatch_metric_alarm.low_traffic"    "prod-ghost-low-traffic"
+            cw_alarm_import "module.user_analytics[0].aws_cloudwatch_metric_alarm.high_error_rate" "prod-ghost-high-error-rate"
+            cw_alarm_import "module.user_analytics[0].aws_cloudwatch_metric_alarm.poor_performance" "prod-ghost-poor-performance"
+            cw_dashboard_import "module.user_analytics[0].aws_cloudwatch_dashboard.user_analytics" "prod-ghost-user-analytics"
+          fi
 
           echo "=== Reconcile complete ==="
 
