@@ -205,12 +205,16 @@ jobs:
             local SECRET_ARN DELETED_DATE
             SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
               --query 'ARN' --output text 2>/dev/null || echo "")
+            [ -z "$SECRET_ARN" ] || [ "$SECRET_ARN" = "None" ] && return 0
             DELETED_DATE=$(aws secretsmanager describe-secret --secret-id "$secret_name" \
               --query 'DeletedDate' --output text 2>/dev/null || echo "None")
-            # Skip secrets that are PENDING_DELETION — Terraform provider treats them as non-existent
-            if [ -n "$SECRET_ARN" ] && [ "$SECRET_ARN" != "None" ] && [ "$DELETED_DATE" = "None" ]; then
-              tf_import "$addr" "$SECRET_ARN"
+            if [ "$DELETED_DATE" != "None" ]; then
+              # Secret is PENDING_DELETION — restore it so Terraform can import rather than
+              # failing with "can't create because a secret with this name is scheduled for deletion"
+              echo "Restoring PENDING_DELETION secret: $secret_name"
+              aws secretsmanager restore-secret --secret-id "$SECRET_ARN" 2>/dev/null || true
             fi
+            tf_import "$addr" "$SECRET_ARN"
             return 0
           }
 
@@ -480,6 +484,8 @@ jobs:
               --auto-scaling-group-names "$ASG_NAME" \
               --query 'length(AutoScalingGroups)' --output text 2>/dev/null || echo "0")
             if [ "$ASG_EXISTS" = "1" ]; then
+              # Force-reimport: stale state causes AlreadyExists on apply
+              terraform state rm "module.alb_asg.aws_autoscaling_group.web" 2>/dev/null || true
               tf_import "module.alb_asg.aws_autoscaling_group.web" "$ASG_NAME"
               break
             fi
@@ -522,11 +528,29 @@ jobs:
           done
 
           echo "=== RDS ==="
-          # Force-reimport: stale state has wrong subnet IDs → Terraform plans update
-          # → AWS rejects "subnets not in same VPC". State rm + import aligns state
-          # with the actual subnet group so no spurious update is ever planned.
-          terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
-          tf_import "module.ghost_db.aws_db_subnet_group.ghost"    "prod-ghost-db-subnet-group"
+          # If the DB subnet group exists but its subnets belong to a different VPC
+          # (e.g. after VPC recreation), delete it so Terraform recreates it with the
+          # correct subnets. This is safe when no RDS instance exists yet.
+          SG_SUBNET_VPC=$(aws rds describe-db-subnet-groups \
+            --db-subnet-group-name "prod-ghost-db-subnet-group" \
+            --query 'DBSubnetGroups[0].VpcId' --output text 2>/dev/null || echo "")
+          if [ -n "$SG_SUBNET_VPC" ] && [ "$SG_SUBNET_VPC" != "None" ] && [ "$SG_SUBNET_VPC" != "$VPC_ID" ]; then
+            echo "DB subnet group VPC ($SG_SUBNET_VPC) != current VPC ($VPC_ID) — deleting stale subnet group"
+            RDS_INST_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
+              --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
+            if [ -z "$RDS_INST_EXISTS" ] || [ "$RDS_INST_EXISTS" = "None" ]; then
+              aws rds delete-db-subnet-group --db-subnet-group-name "prod-ghost-db-subnet-group" 2>/dev/null || true
+              terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+            else
+              echo "WARN: RDS instance exists — cannot delete subnet group; import as-is"
+              terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+              tf_import "module.ghost_db.aws_db_subnet_group.ghost" "prod-ghost-db-subnet-group"
+            fi
+          else
+            # Subnet group exists and belongs to the correct VPC — force-reimport to sync state
+            terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+            tf_import "module.ghost_db.aws_db_subnet_group.ghost" "prod-ghost-db-subnet-group"
+          fi
           tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
           RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
             --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
