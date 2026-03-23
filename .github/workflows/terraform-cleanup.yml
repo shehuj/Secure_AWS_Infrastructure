@@ -30,13 +30,11 @@ env:
   TF_IN_AUTOMATION: true
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
-  # Terraform variable injection from GitHub Secrets
   TF_VAR_route53_zone_id: ${{ secrets.TF_VAR_ROUTE53_ZONE_ID }}
   TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
   TF_VAR_grafana_certificate_arn: ${{ secrets.TF_VAR_GRAFANA_CERTIFICATE_ARN }}
   TF_VAR_grafana_domain_name: ${{ secrets.TF_VAR_GRAFANA_DOMAIN_NAME }}
   TF_VAR_ghost_domain_name: ${{ secrets.TF_VAR_GHOST_DOMAIN_NAME }}
-  # grafana_admin_password_secret_name is set in terraform.tfvars
   TF_VAR_root_volume_size: ${{ secrets.TF_VAR_ROOT_VOLUME_SIZE }}
   TF_VAR_enable_observability: ${{ secrets.TF_VAR_ENABLE_OBSERVABILITY }}
   TF_VAR_prometheus_retention_days: ${{ secrets.TF_VAR_PROMETHEUS_RETENTION_DAYS }}
@@ -106,7 +104,7 @@ jobs:
         run: terraform apply -auto-approve -input=false -lock-timeout=5m
 
   # ─────────────────────────────────────────────
-  # 3. Pre-destroy: resources that block tf destroy
+  # 3. Pre-destroy: unblock resources that prevent tf destroy
   # ─────────────────────────────────────────────
   pre-destroy-cleanup:
     name: Pre-Destroy Resource Cleanup
@@ -124,79 +122,78 @@ jobs:
         run: |
           echo "==> Scaling down ECS services..."
           ENV="${{ github.event.inputs.environment }}"
+          CLUSTERS=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@, '${ENV}')]" --output text 2>/dev/null || echo "")
+          for CLUSTER in $CLUSTERS; do
+            SERVICES=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[]" --output text 2>/dev/null || echo "")
+            for SERVICE in $SERVICES; do
+              SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
+              echo "  Scaling down: $SERVICE_NAME"
+              aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+                --desired-count 0 --no-cli-pager 2>/dev/null || true
+            done
+          done
+          echo "✅ ECS scale-down complete"
 
-          # Find all ECS clusters for this environment
-          CLUSTERS=$(aws ecs list-clusters --query "clusterArns[?contains(@, '${ENV}')]" --output text 2>/dev/null || echo "")
-
-          if [ -z "$CLUSTERS" ]; then
-            echo "No ECS clusters found for environment: $ENV"
-          else
-            for CLUSTER in $CLUSTERS; do
-              CLUSTER_NAME=$(echo "$CLUSTER" | awk -F/ '{print $NF}')
-              echo "Processing cluster: $CLUSTER_NAME"
-
-              SERVICES=$(aws ecs list-services --cluster "$CLUSTER" --query "serviceArns[]" --output text 2>/dev/null || echo "")
-              for SERVICE in $SERVICES; do
-                SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
-                echo "  Scaling down: $SERVICE_NAME"
-                aws ecs update-service \
-                  --cluster "$CLUSTER" \
-                  --service "$SERVICE" \
-                  --desired-count 0 \
-                  --no-cli-pager 2>/dev/null || echo "  Warning: could not scale $SERVICE_NAME"
+      - name: Wait for ECS tasks to stop (drain DB connections)
+        run: |
+          echo "==> Waiting for ECS tasks to stop..."
+          ENV="${{ github.event.inputs.environment }}"
+          CLUSTERS=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@, '${ENV}')]" --output text 2>/dev/null || echo "")
+          for CLUSTER in $CLUSTERS; do
+            SERVICES=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[]" --output text 2>/dev/null || echo "")
+            for SERVICE in $SERVICES; do
+              SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
+              for i in $(seq 1 30); do
+                RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+                  --query 'services[0].runningCount' --output text 2>/dev/null || echo "0")
+                [ "$RUNNING" = "0" ] && echo "  $SERVICE_NAME stopped." && break
+                echo "  $SERVICE_NAME: $RUNNING task(s) still running ($i/30)..."
+                sleep 10
               done
             done
-          fi
-          echo "✅ ECS scale-down complete"
+          done
+          echo "✅ ECS tasks stopped"
 
       - name: Deregister Service Discovery instances
         run: |
           echo "==> Deregistering Service Discovery instances..."
-          ENV="${{ github.event.inputs.environment }}"
-
-          # List all service discovery services
           SERVICES=$(aws servicediscovery list-services \
             --query "Services[].Id" --output text 2>/dev/null || echo "")
-
           for SVC_ID in $SERVICES; do
-            INSTANCES=$(aws servicediscovery list-instances \
-              --service-id "$SVC_ID" \
+            INSTANCES=$(aws servicediscovery list-instances --service-id "$SVC_ID" \
               --query "Instances[].Id" --output text 2>/dev/null || echo "")
-
-            if [ -n "$INSTANCES" ]; then
-              echo "  Deregistering instances from service: $SVC_ID"
-              for INSTANCE_ID in $INSTANCES; do
-                aws servicediscovery deregister-instance \
-                  --service-id "$SVC_ID" \
-                  --instance-id "$INSTANCE_ID" \
-                  --no-cli-pager 2>/dev/null || echo "  Warning: could not deregister $INSTANCE_ID"
-              done
-            fi
+            for INSTANCE_ID in $INSTANCES; do
+              aws servicediscovery deregister-instance \
+                --service-id "$SVC_ID" --instance-id "$INSTANCE_ID" \
+                --no-cli-pager 2>/dev/null || true
+            done
           done
-          echo "✅ Service Discovery deregistration complete"
+          echo "✅ Service Discovery instances deregistered"
 
       - name: Disable ALB deletion protection
         run: |
           echo "==> Disabling ALB deletion protection..."
           ENV="${{ github.event.inputs.environment }}"
-
           ALBS=$(aws elbv2 describe-load-balancers \
             --query "LoadBalancers[?contains(LoadBalancerName, '${ENV}')].LoadBalancerArn" \
             --output text 2>/dev/null || echo "")
-
           for ALB_ARN in $ALBS; do
             ALB_NAME=$(echo "$ALB_ARN" | awk -F/ '{print $(NF-2)}')
             echo "  Disabling deletion protection on: $ALB_NAME"
             aws elbv2 modify-load-balancer-attributes \
               --load-balancer-arn "$ALB_ARN" \
               --attributes Key=deletion_protection.enabled,Value=false \
-              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $ALB_NAME"
+              --no-cli-pager 2>/dev/null || true
           done
           echo "✅ ALB deletion protection disabled"
 
       - name: Delete EFS mount targets
         run: |
-          echo "==> Deleting EFS mount targets for environment: ${{ github.event.inputs.environment }}..."
+          echo "==> Deleting EFS mount targets..."
           ENV="${{ github.event.inputs.environment }}"
           EFS_IDS=$(aws efs describe-file-systems \
             --query "FileSystems[?contains(CreationToken, '${ENV}')].FileSystemId" \
@@ -209,10 +206,8 @@ jobs:
               aws efs delete-mount-target --mount-target-id "$MT_ID" --no-cli-pager 2>/dev/null || true
             done
           done
-          # Wait for all mount targets to finish deleting
           for EFS_ID in $EFS_IDS; do
-            echo "  Waiting for mount targets on $EFS_ID to delete..."
-            for i in $(seq 1 18); do
+            for i in $(seq 1 24); do
               MT_COUNT=$(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
                 --query 'length(MountTargets)' --output text 2>/dev/null || echo "0")
               [ "$MT_COUNT" = "0" ] && break
@@ -221,98 +216,53 @@ jobs:
           done
           echo "✅ EFS mount targets deleted"
 
-      - name: Empty S3 buckets tagged with environment
+      - name: Empty S3 buckets
         run: |
-          echo "==> Emptying S3 buckets for environment: ${{ github.event.inputs.environment }}..."
+          echo "==> Emptying S3 buckets..."
           ENV="${{ github.event.inputs.environment }}"
-
-          # Find buckets tagged with this environment
           ALL_BUCKETS=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null || echo "")
-
           for BUCKET in $ALL_BUCKETS; do
-            # Check if bucket name contains the environment prefix
             if echo "$BUCKET" | grep -q "^${ENV}-"; then
-              echo "  Emptying bucket: $BUCKET"
-              # Remove all versioned objects
-              aws s3api list-object-versions \
-                --bucket "$BUCKET" \
+              echo "  Emptying: $BUCKET"
+              # Delete versioned objects
+              aws s3api list-object-versions --bucket "$BUCKET" \
                 --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
                 --output json 2>/dev/null | \
                 jq -r '.Objects // [] | .[] | "\(.Key) \(.VersionId)"' | \
                 while read -r KEY VID; do
-                  aws s3api delete-object \
-                    --bucket "$BUCKET" --key "$KEY" --version-id "$VID" \
-                    --no-cli-pager 2>/dev/null || true
+                  aws s3api delete-object --bucket "$BUCKET" --key "$KEY" \
+                    --version-id "$VID" --no-cli-pager 2>/dev/null || true
                 done
-
-              # Remove all delete markers
-              aws s3api list-object-versions \
-                --bucket "$BUCKET" \
+              # Delete markers
+              aws s3api list-object-versions --bucket "$BUCKET" \
                 --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
                 --output json 2>/dev/null | \
                 jq -r '.Objects // [] | .[] | "\(.Key) \(.VersionId)"' | \
                 while read -r KEY VID; do
-                  aws s3api delete-object \
-                    --bucket "$BUCKET" --key "$KEY" --version-id "$VID" \
-                    --no-cli-pager 2>/dev/null || true
+                  aws s3api delete-object --bucket "$BUCKET" --key "$KEY" \
+                    --version-id "$VID" --no-cli-pager 2>/dev/null || true
                 done
-
-              # Remove remaining objects
               aws s3 rm "s3://$BUCKET" --recursive --no-cli-pager 2>/dev/null || true
-              echo "  ✅ Bucket emptied: $BUCKET"
+              echo "  ✅ $BUCKET emptied"
             fi
           done
-          echo "✅ S3 cleanup complete"
-
-      - name: Wait for ECS tasks to stop (drain DB connections)
-        run: |
-          echo "==> Waiting for ECS tasks to stop before RDS teardown..."
-          ENV="${{ github.event.inputs.environment }}"
-          CLUSTERS=$(aws ecs list-clusters \
-            --query "clusterArns[?contains(@, '${ENV}')]" \
-            --output text 2>/dev/null || echo "")
-          for CLUSTER in $CLUSTERS; do
-            SERVICES=$(aws ecs list-services --cluster "$CLUSTER" \
-              --query "serviceArns[]" --output text 2>/dev/null || echo "")
-            for SERVICE in $SERVICES; do
-              SERVICE_NAME=$(echo "$SERVICE" | awk -F/ '{print $NF}')
-              echo "  Waiting for $SERVICE_NAME to reach 0 running tasks..."
-              for i in $(seq 1 24); do
-                RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" \
-                  --services "$SERVICE" \
-                  --query 'services[0].runningCount' \
-                  --output text 2>/dev/null || echo "0")
-                [ "$RUNNING" = "0" ] && echo "  $SERVICE_NAME stopped." && break
-                echo "  Still $RUNNING task(s) running ($i/24)..."
-                sleep 10
-              done
-            done
-          done
-          echo "✅ ECS tasks stopped — DB connections cleared"
+          echo "✅ S3 buckets emptied"
 
       - name: Restore Secrets Manager secrets stuck in deletion state
         run: |
-          echo "==> Checking Secrets Manager secrets for stuck deletion state..."
+          echo "==> Checking Secrets Manager for stuck deletion state..."
           ENV="${{ github.event.inputs.environment }}"
-
-          # If a previous partial destroy left secrets in DeletionScheduled state,
-          # Terraform can't force-delete them again. Restore first so Terraform
-          # can run ForceDeleteWithoutRecovery cleanly.
           for SECRET_NAME in "${ENV}/ghost/rds/master-password" "${ENV}/ghost/rds/app-password"; do
-            DELETED=$(aws secretsmanager describe-secret \
-              --secret-id "$SECRET_NAME" \
-              --query 'DeletedDate' \
-              --output text 2>/dev/null || echo "NOT_FOUND")
-
+            DELETED=$(aws secretsmanager describe-secret --secret-id "$SECRET_NAME" \
+              --query 'DeletedDate' --output text 2>/dev/null || echo "NOT_FOUND")
             if [ "$DELETED" = "NOT_FOUND" ]; then
-              echo "  $SECRET_NAME: not found (will be skipped by Terraform)"
+              echo "  $SECRET_NAME: not found"
             elif [ "$DELETED" != "None" ]; then
-              echo "  $SECRET_NAME: scheduled for deletion — restoring for clean Terraform destroy"
-              aws secretsmanager restore-secret \
-                --secret-id "$SECRET_NAME" \
-                --no-cli-pager 2>/dev/null || echo "  Warning: could not restore $SECRET_NAME"
+              echo "  Restoring $SECRET_NAME from scheduled deletion"
+              aws secretsmanager restore-secret --secret-id "$SECRET_NAME" \
+                --no-cli-pager 2>/dev/null || true
             else
-              echo "  $SECRET_NAME: active (normal state)"
+              echo "  $SECRET_NAME: active"
             fi
           done
           echo "✅ Secrets Manager state check complete"
@@ -326,15 +276,14 @@ jobs:
             --output text 2>/dev/null || echo "")
           for DB in $DBS; do
             echo "  Disabling deletion protection on: $DB"
-            aws rds modify-db-instance \
-              --db-instance-identifier "$DB" \
-              --no-deletion-protection \
-              --apply-immediately \
-              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $DB"
+            aws rds modify-db-instance --db-instance-identifier "$DB" \
+              --no-deletion-protection --apply-immediately \
+              --no-cli-pager 2>/dev/null || true
           done
           for DB in $DBS; do
-            echo "  Waiting for $DB to be available after modification..."
-            aws rds wait db-instance-available --db-instance-identifier "$DB" --no-cli-pager 2>/dev/null || true
+            echo "  Waiting for $DB..."
+            aws rds wait db-instance-available --db-instance-identifier "$DB" \
+              --no-cli-pager 2>/dev/null || true
           done
           echo "✅ RDS deletion protection disabled"
 
@@ -342,29 +291,44 @@ jobs:
         run: |
           echo "==> Draining Auto Scaling Groups..."
           ENV="${{ github.event.inputs.environment }}"
-
           ASGS=$(aws autoscaling describe-auto-scaling-groups \
             --query "AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')].AutoScalingGroupName" \
             --output text 2>/dev/null || echo "")
-
           for ASG in $ASGS; do
-            echo "  Setting desired/min to 0 for: $ASG"
+            echo "  Setting desired/min to 0: $ASG"
             aws autoscaling update-auto-scaling-group \
-              --auto-scaling-group-name "$ASG" \
-              --min-size 0 \
-              --desired-capacity 0 \
-              --no-cli-pager 2>/dev/null || echo "  Warning: could not update $ASG"
+              --auto-scaling-group-name "$ASG" --min-size 0 --desired-capacity 0 \
+              --no-cli-pager 2>/dev/null || true
           done
-
-          # Wait for instances to terminate
           if [ -n "$ASGS" ]; then
-            echo "  Waiting 60s for ASG instances to terminate..."
+            echo "  Waiting 60s for EC2 instances to terminate..."
             sleep 60
           fi
           echo "✅ ASG drain complete"
 
+      - name: Detach IAM policies from roles (prevent deletion failures)
+        run: |
+          echo "==> Detaching IAM policies from environment roles..."
+          ENV="${{ github.event.inputs.environment }}"
+          ROLES=$(aws iam list-roles \
+            --query "Roles[?contains(RoleName, '${ENV}')].RoleName" \
+            --output text 2>/dev/null || echo "")
+          for ROLE in $ROLES; do
+            for POLICY_ARN in $(aws iam list-attached-role-policies --role-name "$ROLE" \
+              --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$ROLE" \
+                --policy-arn "$POLICY_ARN" 2>/dev/null || true
+            done
+            for POLICY_NAME in $(aws iam list-role-policies --role-name "$ROLE" \
+              --query "PolicyNames[]" --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$ROLE" \
+                --policy-name "$POLICY_NAME" 2>/dev/null || true
+            done
+          done
+          echo "✅ IAM policy detachments complete"
+
   # ─────────────────────────────────────────────
-  # 4. Terraform plan the destroy (show what will be removed)
+  # 4. Terraform plan the destroy
   # ─────────────────────────────────────────────
   destroy-plan:
     name: Plan Destroy
@@ -501,17 +465,528 @@ jobs:
       - name: Fail if destroy failed
         if: steps.destroy.outcome == 'failure'
         run: |
-          echo "❌ Terraform destroy failed. Check the output artifact for details."
-          echo "Some resources may need manual cleanup in the AWS console."
+          echo "⚠️ Terraform destroy had errors — post-destroy mop-up will clean remaining resources."
+          echo "Check the artifact for details."
           exit 1
 
   # ─────────────────────────────────────────────
-  # 6. Post-destroy: verify and report
+  # 6. Post-destroy mop-up: force-delete all survivors
+  #    Runs even if terraform destroy partially failed.
+  #    Cleans every AWS resource matching the environment prefix.
+  # ─────────────────────────────────────────────
+  post-destroy-mop-up:
+    name: Post-Destroy Mop-Up
+    runs-on: ubuntu-latest
+    needs: [validate, destroy]
+    if: always() && needs.validate.outputs.confirmed == 'true'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Force-delete Secrets Manager secrets
+        run: |
+          echo "==> Force-deleting Secrets Manager secrets..."
+          ENV="${{ github.event.inputs.environment }}"
+          SECRET_ARNS=$(aws secretsmanager list-secrets \
+            --query "SecretList[?starts_with(Name, '${ENV}/')].ARN" \
+            --output text 2>/dev/null || echo "")
+          for ARN in $SECRET_ARNS; do
+            SECRET_NAME=$(echo "$ARN" | awk -F: '{print $NF}')
+            echo "  Force-deleting: $SECRET_NAME"
+            aws secretsmanager delete-secret \
+              --secret-id "$ARN" \
+              --force-delete-without-recovery \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ Secrets Manager secrets deleted"
+
+      - name: Delete SSM parameters
+        run: |
+          echo "==> Deleting SSM parameters..."
+          ENV="${{ github.event.inputs.environment }}"
+          PARAMS=$(aws ssm describe-parameters \
+            --parameter-filters "Key=Name,Option=BeginsWith,Values=/${ENV}/" \
+            --query "Parameters[].Name" --output text 2>/dev/null || echo "")
+          for PARAM in $PARAMS; do
+            echo "  Deleting: $PARAM"
+            aws ssm delete-parameter --name "$PARAM" --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ SSM parameters deleted"
+
+      - name: Delete CloudWatch log groups
+        run: |
+          echo "==> Deleting CloudWatch log groups..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Collect all log groups matching environment patterns
+          for PREFIX in \
+            "/ecs/${ENV}" \
+            "/aws/ec2/${ENV}" \
+            "/aws/vpc/${ENV}" \
+            "/aws/rum/${ENV}" \
+            "/aws/analytics/${ENV}" \
+            "/aws/apigateway/${ENV}"; do
+            LGS=$(aws logs describe-log-groups \
+              --log-group-name-prefix "$PREFIX" \
+              --query "logGroups[].logGroupName" --output text 2>/dev/null || echo "")
+            for LG in $LGS; do
+              echo "  Deleting: $LG"
+              aws logs delete-log-group --log-group-name "$LG" --no-cli-pager 2>/dev/null || true
+            done
+          done
+          echo "✅ CloudWatch log groups deleted"
+
+      - name: Delete CloudWatch alarms and dashboards
+        run: |
+          echo "==> Deleting CloudWatch alarms and dashboards..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Delete alarms in batches of 100 (API limit)
+          ALARMS=$(aws cloudwatch describe-alarms \
+            --query "MetricAlarms[?starts_with(AlarmName, '${ENV}-')].AlarmName" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$ALARMS" ]; then
+            echo "$ALARMS" | tr '\t' '\n' | xargs -n 100 \
+              aws cloudwatch delete-alarms --alarm-names 2>/dev/null || true
+          fi
+          # Delete dashboards
+          DASHBOARDS=$(aws cloudwatch list-dashboards \
+            --query "DashboardEntries[?starts_with(DashboardName, '${ENV}-')].DashboardName" \
+            --output text 2>/dev/null || echo "")
+          for DB in $DASHBOARDS; do
+            echo "  Deleting dashboard: $DB"
+            aws cloudwatch delete-dashboards --dashboard-names "$DB" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ CloudWatch alarms and dashboards deleted"
+
+      - name: Delete ECS task definitions (deregister + delete INACTIVE)
+        run: |
+          echo "==> Deregistering and deleting ECS task definitions..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Deregister all ACTIVE revisions for environment families
+          for FAMILY in $(aws ecs list-task-definition-families \
+            --family-prefix "${ENV}-" --status ACTIVE \
+            --query "families[]" --output text 2>/dev/null); do
+            for TD_ARN in $(aws ecs list-task-definitions \
+              --family-prefix "$FAMILY" --status ACTIVE \
+              --query "taskDefinitionArns[]" --output text 2>/dev/null); do
+              aws ecs deregister-task-definition --task-definition "$TD_ARN" \
+                --no-cli-pager 2>/dev/null || true
+            done
+          done
+          # Delete INACTIVE revisions (supported since AWS 2023)
+          for FAMILY in $(aws ecs list-task-definition-families \
+            --family-prefix "${ENV}-" --status INACTIVE \
+            --query "families[]" --output text 2>/dev/null); do
+            for TD_ARN in $(aws ecs list-task-definitions \
+              --family-prefix "$FAMILY" --status INACTIVE \
+              --query "taskDefinitionArns[]" --output text 2>/dev/null); do
+              aws ecs delete-task-definitions --task-definitions "$TD_ARN" \
+                --no-cli-pager 2>/dev/null || true
+            done
+          done
+          echo "✅ ECS task definitions cleaned up"
+
+      - name: Delete remaining ECS clusters
+        run: |
+          echo "==> Deleting remaining ECS clusters..."
+          ENV="${{ github.event.inputs.environment }}"
+          CLUSTERS=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@, '${ENV}')]" \
+            --output text 2>/dev/null || echo "")
+          for CLUSTER in $CLUSTERS; do
+            # Scale down and delete any remaining services
+            SERVICES=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[]" --output text 2>/dev/null || echo "")
+            for SVC in $SERVICES; do
+              aws ecs update-service --cluster "$CLUSTER" --service "$SVC" \
+                --desired-count 0 --no-cli-pager 2>/dev/null || true
+              aws ecs delete-service --cluster "$CLUSTER" --service "$SVC" \
+                --force --no-cli-pager 2>/dev/null || true
+            done
+            echo "  Deleting cluster: $(echo "$CLUSTER" | awk -F/ '{print $NF}')"
+            aws ecs delete-cluster --cluster "$CLUSTER" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ ECS clusters deleted"
+
+      - name: Delete Service Discovery services and namespaces
+        run: |
+          echo "==> Deleting Service Discovery resources..."
+          ENV="${{ github.event.inputs.environment }}"
+          NS_IDS=$(aws servicediscovery list-namespaces \
+            --query "Namespaces[?contains(Name, '${ENV}')].Id" \
+            --output text 2>/dev/null || echo "")
+          for NS_ID in $NS_IDS; do
+            SVC_IDS=$(aws servicediscovery list-services \
+              --filters "Name=NAMESPACE_ID,Values=$NS_ID,Condition=EQ" \
+              --query "Services[].Id" --output text 2>/dev/null || echo "")
+            for SVC_ID in $SVC_IDS; do
+              # Deregister remaining instances
+              INSTS=$(aws servicediscovery list-instances --service-id "$SVC_ID" \
+                --query "Instances[].Id" --output text 2>/dev/null || echo "")
+              for INST in $INSTS; do
+                aws servicediscovery deregister-instance \
+                  --service-id "$SVC_ID" --instance-id "$INST" \
+                  --no-cli-pager 2>/dev/null || true
+              done
+              echo "  Deleting SD service: $SVC_ID"
+              aws servicediscovery delete-service --id "$SVC_ID" \
+                --no-cli-pager 2>/dev/null || true
+            done
+            echo "  Deleting SD namespace: $NS_ID"
+            aws servicediscovery delete-namespace --id "$NS_ID" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ Service Discovery resources deleted"
+
+      - name: Delete remaining ALBs, listeners, and target groups
+        run: |
+          echo "==> Deleting remaining load balancers..."
+          ENV="${{ github.event.inputs.environment }}"
+          ALB_ARNS=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, '${ENV}')].LoadBalancerArn" \
+            --output text 2>/dev/null || echo "")
+          for ALB_ARN in $ALB_ARNS; do
+            ALB_NAME=$(echo "$ALB_ARN" | awk -F/ '{print $(NF-2)}')
+            # Disable deletion protection first
+            aws elbv2 modify-load-balancer-attributes \
+              --load-balancer-arn "$ALB_ARN" \
+              --attributes Key=deletion_protection.enabled,Value=false \
+              --no-cli-pager 2>/dev/null || true
+            # Delete all listeners
+            for LISTENER_ARN in $(aws elbv2 describe-listeners \
+              --load-balancer-arn "$ALB_ARN" \
+              --query "Listeners[].ListenerArn" --output text 2>/dev/null); do
+              aws elbv2 delete-listener --listener-arn "$LISTENER_ARN" \
+                --no-cli-pager 2>/dev/null || true
+            done
+            echo "  Deleting ALB: $ALB_NAME"
+            aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # Wait for ALBs to fully delete before removing target groups
+          if [ -n "$ALB_ARNS" ]; then sleep 30; fi
+          TG_ARNS=$(aws elbv2 describe-target-groups \
+            --query "TargetGroups[?contains(TargetGroupName, '${ENV}')].TargetGroupArn" \
+            --output text 2>/dev/null || echo "")
+          for TG_ARN in $TG_ARNS; do
+            TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$TG_ARN" \
+              --query "TargetGroups[0].TargetGroupName" --output text 2>/dev/null || echo "")
+            echo "  Deleting target group: $TG_NAME"
+            aws elbv2 delete-target-group --target-group-arn "$TG_ARN" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ Load balancers and target groups deleted"
+
+      - name: Delete remaining EFS file systems
+        run: |
+          echo "==> Deleting remaining EFS file systems..."
+          ENV="${{ github.event.inputs.environment }}"
+          EFS_IDS=$(aws efs describe-file-systems \
+            --query "FileSystems[?contains(CreationToken, '${ENV}')].FileSystemId" \
+            --output text 2>/dev/null || echo "")
+          for EFS_ID in $EFS_IDS; do
+            # Delete access points
+            for AP in $(aws efs describe-access-points --file-system-id "$EFS_ID" \
+              --query "AccessPoints[].AccessPointId" --output text 2>/dev/null); do
+              aws efs delete-access-point --access-point-id "$AP" \
+                --no-cli-pager 2>/dev/null || true
+            done
+            # Delete remaining mount targets
+            for MT in $(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
+              --query "MountTargets[].MountTargetId" --output text 2>/dev/null); do
+              aws efs delete-mount-target --mount-target-id "$MT" \
+                --no-cli-pager 2>/dev/null || true
+            done
+            # Wait for mount targets to delete
+            for i in $(seq 1 24); do
+              MT_COUNT=$(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
+                --query "length(MountTargets)" --output text 2>/dev/null || echo "0")
+              [ "$MT_COUNT" = "0" ] && break
+              sleep 10
+            done
+            echo "  Deleting EFS: $EFS_ID"
+            aws efs delete-file-system --file-system-id "$EFS_ID" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ EFS file systems deleted"
+
+      - name: Delete remaining RDS instances and related resources
+        run: |
+          echo "==> Deleting remaining RDS instances..."
+          ENV="${{ github.event.inputs.environment }}"
+          DBS=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, '${ENV}')].DBInstanceIdentifier" \
+            --output text 2>/dev/null || echo "")
+          for DB in $DBS; do
+            echo "  Deleting RDS instance: $DB"
+            aws rds delete-db-instance \
+              --db-instance-identifier "$DB" \
+              --skip-final-snapshot \
+              --delete-automated-backups \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # Wait for RDS deletion before removing subnet groups
+          for DB in $DBS; do
+            echo "  Waiting for $DB to be deleted..."
+            aws rds wait db-instance-deleted \
+              --db-instance-identifier "$DB" --no-cli-pager 2>/dev/null || true
+          done
+          # Delete subnet groups
+          for SNG in $(aws rds describe-db-subnet-groups \
+            --query "DBSubnetGroups[?contains(DBSubnetGroupName, '${ENV}')].DBSubnetGroupName" \
+            --output text 2>/dev/null); do
+            echo "  Deleting DB subnet group: $SNG"
+            aws rds delete-db-subnet-group --db-subnet-group-name "$SNG" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # Delete parameter groups (custom only, skip default.*)
+          for PG in $(aws rds describe-db-parameter-groups \
+            --query "DBParameterGroups[?contains(DBParameterGroupName, '${ENV}')].DBParameterGroupName" \
+            --output text 2>/dev/null); do
+            echo "  Deleting parameter group: $PG"
+            aws rds delete-db-parameter-group --db-parameter-group-name "$PG" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ RDS resources deleted"
+
+      - name: Delete IAM roles and policies
+        run: |
+          echo "==> Deleting IAM roles and policies..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Delete instance profiles first
+          for PROFILE in $(aws iam list-instance-profiles \
+            --query "InstanceProfiles[?contains(InstanceProfileName, '${ENV}')].InstanceProfileName" \
+            --output text 2>/dev/null); do
+            # Remove roles from profile before deleting
+            for ROLE in $(aws iam get-instance-profile --instance-profile-name "$PROFILE" \
+              --query "InstanceProfile.Roles[].RoleName" --output text 2>/dev/null); do
+              aws iam remove-role-from-instance-profile \
+                --instance-profile-name "$PROFILE" --role-name "$ROLE" 2>/dev/null || true
+            done
+            echo "  Deleting instance profile: $PROFILE"
+            aws iam delete-instance-profile --instance-profile-name "$PROFILE" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # Delete roles
+          for ROLE in $(aws iam list-roles \
+            --query "Roles[?contains(RoleName, '${ENV}')].RoleName" \
+            --output text 2>/dev/null); do
+            # Detach managed policies
+            for POLICY_ARN in $(aws iam list-attached-role-policies --role-name "$ROLE" \
+              --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$ROLE" \
+                --policy-arn "$POLICY_ARN" 2>/dev/null || true
+            done
+            # Delete inline policies
+            for POLICY_NAME in $(aws iam list-role-policies --role-name "$ROLE" \
+              --query "PolicyNames[]" --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$ROLE" \
+                --policy-name "$POLICY_NAME" 2>/dev/null || true
+            done
+            echo "  Deleting role: $ROLE"
+            aws iam delete-role --role-name "$ROLE" --no-cli-pager 2>/dev/null || true
+          done
+          # Delete local managed policies
+          for POLICY_ARN in $(aws iam list-policies --scope Local \
+            --query "Policies[?contains(PolicyName, '${ENV}')].Arn" \
+            --output text 2>/dev/null); do
+            POLICY_NAME=$(echo "$POLICY_ARN" | awk -F/ '{print $NF}')
+            # Delete non-default versions
+            for VER in $(aws iam list-policy-versions --policy-arn "$POLICY_ARN" \
+              --query "Versions[?!IsDefaultVersion].VersionId" --output text 2>/dev/null); do
+              aws iam delete-policy-version --policy-arn "$POLICY_ARN" \
+                --version-id "$VER" 2>/dev/null || true
+            done
+            echo "  Deleting policy: $POLICY_NAME"
+            aws iam delete-policy --policy-arn "$POLICY_ARN" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ IAM roles and policies deleted"
+
+      - name: Delete remaining ASGs and launch templates
+        run: |
+          echo "==> Deleting remaining ASGs and launch templates..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Delete ASGs
+          for ASG in $(aws autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')].AutoScalingGroupName" \
+            --output text 2>/dev/null); do
+            echo "  Deleting ASG: $ASG"
+            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG" \
+              --force-delete --no-cli-pager 2>/dev/null || true
+          done
+          # Delete launch templates
+          for LT_ID in $(aws ec2 describe-launch-templates \
+            --filters "Name=launch-template-name,Values=${ENV}-*" \
+            --query "LaunchTemplates[].LaunchTemplateId" --output text 2>/dev/null); do
+            echo "  Deleting launch template: $LT_ID"
+            aws ec2 delete-launch-template --launch-template-id "$LT_ID" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ ASGs and launch templates deleted"
+
+      - name: Delete remaining S3 buckets
+        run: |
+          echo "==> Deleting remaining S3 buckets..."
+          ENV="${{ github.event.inputs.environment }}"
+          ALL_BUCKETS=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null || echo "")
+          for BUCKET in $ALL_BUCKETS; do
+            if echo "$BUCKET" | grep -q "^${ENV}-"; then
+              echo "  Deleting bucket: $BUCKET"
+              # Empty the bucket first
+              aws s3 rm "s3://$BUCKET" --recursive --no-cli-pager 2>/dev/null || true
+              aws s3api delete-bucket --bucket "$BUCKET" --no-cli-pager 2>/dev/null || true
+            fi
+          done
+          echo "✅ S3 buckets deleted"
+
+      - name: Delete Cognito identity pools and RUM app monitors
+        run: |
+          echo "==> Deleting Cognito and RUM resources..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Cognito identity pools
+          for POOL_ID in $(aws cognito-identity list-identity-pools --max-results 60 \
+            --query "IdentityPools[?contains(IdentityPoolName, '${ENV}')].IdentityPoolId" \
+            --output text 2>/dev/null); do
+            echo "  Deleting Cognito pool: $POOL_ID"
+            aws cognito-identity delete-identity-pool --identity-pool-id "$POOL_ID" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # RUM app monitors
+          for MONITOR in $(aws rum list-app-monitors \
+            --query "AppMonitorSummaries[?contains(Name, '${ENV}')].Name" \
+            --output text 2>/dev/null); do
+            echo "  Deleting RUM monitor: $MONITOR"
+            aws rum delete-app-monitor --name "$MONITOR" --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ Cognito and RUM resources deleted"
+
+      - name: Delete VPC and networking resources
+        run: |
+          echo "==> Deleting VPC and networking resources..."
+          ENV="${{ github.event.inputs.environment }}"
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+            --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=${ENV}-vpc" \
+              --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+          fi
+
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            echo "  Processing VPC: $VPC_ID"
+
+            # Delete NAT gateways (must happen before EIPs can be released)
+            for NAT in $(aws ec2 describe-nat-gateways \
+              --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,pending" \
+              --query "NatGateways[].NatGatewayId" --output text 2>/dev/null); do
+              EIP_ALLOC=$(aws ec2 describe-nat-gateways --nat-gateway-ids "$NAT" \
+                --query "NatGateways[0].NatGatewayAddresses[0].AllocationId" \
+                --output text 2>/dev/null || echo "")
+              echo "  Deleting NAT gateway: $NAT"
+              aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" \
+                --no-cli-pager 2>/dev/null || true
+              echo "  Waiting for NAT gateway $NAT to delete..."
+              for i in $(seq 1 30); do
+                STATE=$(aws ec2 describe-nat-gateways --nat-gateway-ids "$NAT" \
+                  --query "NatGateways[0].State" --output text 2>/dev/null || echo "deleted")
+                [ "$STATE" = "deleted" ] && break
+                sleep 10
+              done
+              if [ -n "$EIP_ALLOC" ] && [ "$EIP_ALLOC" != "None" ]; then
+                aws ec2 release-address --allocation-id "$EIP_ALLOC" \
+                  --no-cli-pager 2>/dev/null || true
+              fi
+            done
+
+            # Delete non-default security groups (retry once for dependency ordering)
+            for attempt in 1 2; do
+              for SG in $(aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query "SecurityGroups[?GroupName!='default'].GroupId" \
+                --output text 2>/dev/null); do
+                aws ec2 delete-security-group --group-id "$SG" \
+                  --no-cli-pager 2>/dev/null || true
+              done
+              [ "$attempt" = "1" ] && sleep 5
+            done
+
+            # Delete subnets
+            for SN in $(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query "Subnets[].SubnetId" --output text 2>/dev/null); do
+              echo "  Deleting subnet: $SN"
+              aws ec2 delete-subnet --subnet-id "$SN" --no-cli-pager 2>/dev/null || true
+            done
+
+            # Delete non-main route tables (disassociate first)
+            for RT in $(aws ec2 describe-route-tables \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query "RouteTables[?!Associations[?Main==true]].RouteTableId" \
+              --output text 2>/dev/null); do
+              for ASSOC in $(aws ec2 describe-route-tables --route-table-ids "$RT" \
+                --query "RouteTables[0].Associations[?!Main].RouteTableAssociationId" \
+                --output text 2>/dev/null); do
+                aws ec2 disassociate-route-table --association-id "$ASSOC" \
+                  2>/dev/null || true
+              done
+              echo "  Deleting route table: $RT"
+              aws ec2 delete-route-table --route-table-id "$RT" \
+                --no-cli-pager 2>/dev/null || true
+            done
+
+            # Detach and delete internet gateway
+            for IGW in $(aws ec2 describe-internet-gateways \
+              --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+              --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null); do
+              echo "  Detaching and deleting IGW: $IGW"
+              aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" \
+                --vpc-id "$VPC_ID" 2>/dev/null || true
+              aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" \
+                --no-cli-pager 2>/dev/null || true
+            done
+
+            # Delete VPC
+            echo "  Deleting VPC: $VPC_ID"
+            aws ec2 delete-vpc --vpc-id "$VPC_ID" --no-cli-pager 2>/dev/null || true
+          else
+            echo "  No VPC found for environment: $ENV"
+          fi
+          echo "✅ VPC and networking resources deleted"
+
+      - name: Delete VPC flow log and orphaned EIPs
+        run: |
+          echo "==> Cleaning up flow logs and orphaned EIPs..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Delete any remaining VPC flow logs tagged for this env
+          for FL in $(aws ec2 describe-flow-logs \
+            --filter "Name=tag:Environment,Values=${ENV}" \
+            --query "FlowLogs[].FlowLogId" --output text 2>/dev/null); do
+            echo "  Deleting flow log: $FL"
+            aws ec2 delete-flow-logs --flow-log-ids "$FL" --no-cli-pager 2>/dev/null || true
+          done
+          # Release any orphaned EIPs tagged for this environment
+          for EIP_ALLOC in $(aws ec2 describe-addresses \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+            --query "Addresses[].AllocationId" --output text 2>/dev/null); do
+            echo "  Releasing EIP: $EIP_ALLOC"
+            aws ec2 release-address --allocation-id "$EIP_ALLOC" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ Flow logs and orphaned EIPs cleaned up"
+
+  # ─────────────────────────────────────────────
+  # 7. Verify: report on any remaining resources
   # ─────────────────────────────────────────────
   verify:
     name: Verify Cleanup
     runs-on: ubuntu-latest
-    needs: destroy
+    needs: post-destroy-mop-up
     if: always()
     steps:
       - name: Configure AWS credentials
@@ -524,95 +999,149 @@ jobs:
         id: check_remaining
         run: |
           ENV="${{ github.event.inputs.environment }}"
-          REMAINING=0
+          TOTAL=0
 
-          echo "==> Checking for remaining resources tagged with environment: $ENV"
+          count_resources() {
+            local label="$1"
+            local count="$2"
+            echo "$label: $count"
+            echo "${label// /_}=$count" >> $GITHUB_OUTPUT
+            TOTAL=$((TOTAL + count))
+          }
 
-          # Check ECS clusters
-          CLUSTERS=$(aws ecs list-clusters \
-            --query "clusterArns[?contains(@, '${ENV}')]" \
-            --output text 2>/dev/null | wc -w)
-          echo "ECS clusters remaining: $CLUSTERS"
-          REMAINING=$((REMAINING + CLUSTERS))
+          count_resources "ECS clusters" "$(aws ecs list-clusters \
+            --query "length(clusterArns[?contains(@, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
 
-          # Check ALBs
-          ALBS=$(aws elbv2 describe-load-balancers \
-            --query "LoadBalancers[?contains(LoadBalancerName, '${ENV}')].LoadBalancerArn" \
-            --output text 2>/dev/null | wc -w)
-          echo "ALBs remaining: $ALBS"
-          REMAINING=$((REMAINING + ALBS))
+          count_resources "ECS services" "$(
+            TOTAL_SVC=0
+            for C in $(aws ecs list-clusters \
+              --query "clusterArns[?contains(@, '${ENV}')]" --output text 2>/dev/null); do
+              N=$(aws ecs list-services --cluster "$C" \
+                --query "length(serviceArns)" --output text 2>/dev/null || echo 0)
+              TOTAL_SVC=$((TOTAL_SVC + N))
+            done
+            echo $TOTAL_SVC)"
 
-          # Check ASGs
-          ASGS=$(aws autoscaling describe-auto-scaling-groups \
-            --query "AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')].AutoScalingGroupName" \
-            --output text 2>/dev/null | wc -w)
-          echo "ASGs remaining: $ASGS"
-          REMAINING=$((REMAINING + ASGS))
+          count_resources "ALBs" "$(aws elbv2 describe-load-balancers \
+            --query "length(LoadBalancers[?contains(LoadBalancerName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
 
-          # Check VPCs (by name tag)
-          VPCS=$(aws ec2 describe-vpcs \
+          count_resources "Target groups" "$(aws elbv2 describe-target-groups \
+            --query "length(TargetGroups[?contains(TargetGroupName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "ASGs" "$(aws autoscaling describe-auto-scaling-groups \
+            --query "length(AutoScalingGroups[?contains(AutoScalingGroupName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "RDS instances" "$(aws rds describe-db-instances \
+            --query "length(DBInstances[?contains(DBInstanceIdentifier, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "EFS file systems" "$(aws efs describe-file-systems \
+            --query "length(FileSystems[?contains(CreationToken, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "VPCs" "$(aws ec2 describe-vpcs \
             --filters "Name=tag:Environment,Values=${ENV}" \
-            --query "Vpcs[].VpcId" \
-            --output text 2>/dev/null | wc -w)
-          echo "VPCs remaining: $VPCS"
-          REMAINING=$((REMAINING + VPCS))
+            --query "length(Vpcs)" --output text 2>/dev/null || echo 0)"
 
-          # Check RDS instances
-          RDS=$(aws rds describe-db-instances \
-            --query "DBInstances[?contains(DBInstanceIdentifier, '${ENV}')].DBInstanceIdentifier" \
-            --output text 2>/dev/null | wc -w)
-          echo "RDS instances remaining: $RDS"
-          REMAINING=$((REMAINING + RDS))
+          count_resources "Security groups" "$(
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Environment,Values=${ENV}" \
+              --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+            if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+              aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query "length(SecurityGroups[?GroupName!='default'])" \
+                --output text 2>/dev/null || echo 0
+            else echo 0; fi)"
 
-          # Check Secrets Manager secrets still scheduled for deletion
-          SECRETS=$(aws secretsmanager list-secrets \
-            --filters Key=name,Values="${ENV}/ghost/rds" \
-            --query 'SecretList[].Name' \
-            --output text 2>/dev/null | wc -w)
-          echo "Secrets Manager secrets remaining: $SECRETS"
+          count_resources "IAM roles" "$(aws iam list-roles \
+            --query "length(Roles[?contains(RoleName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
 
-          echo "remaining=$REMAINING" >> $GITHUB_OUTPUT
-          echo "clusters=$CLUSTERS" >> $GITHUB_OUTPUT
-          echo "albs=$ALBS" >> $GITHUB_OUTPUT
-          echo "asgs=$ASGS" >> $GITHUB_OUTPUT
-          echo "vpcs=$VPCS" >> $GITHUB_OUTPUT
-          echo "rds=$RDS" >> $GITHUB_OUTPUT
+          count_resources "IAM policies" "$(aws iam list-policies --scope Local \
+            --query "length(Policies[?contains(PolicyName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "Secrets Manager" "$(aws secretsmanager list-secrets \
+            --query "length(SecretList[?starts_with(Name, '${ENV}/')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "SSM parameters" "$(aws ssm describe-parameters \
+            --parameter-filters "Key=Name,Option=BeginsWith,Values=/${ENV}/" \
+            --query "length(Parameters)" --output text 2>/dev/null || echo 0)"
+
+          count_resources "CW alarms" "$(aws cloudwatch describe-alarms \
+            --query "length(MetricAlarms[?starts_with(AlarmName, '${ENV}-')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "S3 buckets" "$(aws s3api list-buckets \
+            --query "length(Buckets[?starts_with(Name, '${ENV}-')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "Service Discovery namespaces" "$(aws servicediscovery list-namespaces \
+            --query "length(Namespaces[?contains(Name, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "Cognito identity pools" "$(aws cognito-identity list-identity-pools \
+            --max-results 60 \
+            --query "length(IdentityPools[?contains(IdentityPoolName, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "RUM app monitors" "$(aws rum list-app-monitors \
+            --query "length(AppMonitorSummaries[?contains(Name, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
 
       - name: Write final summary
         if: always()
         run: |
-          DESTROY_STATUS="${{ needs.destroy.result }}"
-          REMAINING="${{ steps.check_remaining.outputs.remaining }}"
+          ENV="${{ github.event.inputs.environment }}"
+          TOTAL="${{ steps.check_remaining.outputs.total }}"
 
           echo "## 🏁 Cleanup Final Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | $ENV |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Destroy status | $DESTROY_STATUS |" >> $GITHUB_STEP_SUMMARY
           echo "| Completed at | $(date -u) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "### Remaining Resources" >> $GITHUB_STEP_SUMMARY
+          echo "### Remaining Resource Counts" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Type | Remaining |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| ECS Clusters | ${{ steps.check_remaining.outputs.clusters }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Load Balancers | ${{ steps.check_remaining.outputs.albs }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Auto Scaling Groups | ${{ steps.check_remaining.outputs.asgs }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS Instances | ${{ steps.check_remaining.outputs.rds }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| VPCs | ${{ steps.check_remaining.outputs.vpcs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ECS Clusters | ${{ steps.check_remaining.outputs.ECS_clusters }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ECS Services | ${{ steps.check_remaining.outputs.ECS_services }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ALBs | ${{ steps.check_remaining.outputs.ALBs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target Groups | ${{ steps.check_remaining.outputs.Target_groups }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ASGs | ${{ steps.check_remaining.outputs.ASGs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS Instances | ${{ steps.check_remaining.outputs.RDS_instances }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EFS File Systems | ${{ steps.check_remaining.outputs.EFS_file_systems }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| VPCs | ${{ steps.check_remaining.outputs.VPCs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Groups | ${{ steps.check_remaining.outputs.Security_groups }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| IAM Roles | ${{ steps.check_remaining.outputs.IAM_roles }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| IAM Policies | ${{ steps.check_remaining.outputs.IAM_policies }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets Manager | ${{ steps.check_remaining.outputs.Secrets_Manager }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SSM Parameters | ${{ steps.check_remaining.outputs.SSM_parameters }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CloudWatch Alarms | ${{ steps.check_remaining.outputs.CW_alarms }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| S3 Buckets | ${{ steps.check_remaining.outputs.S3_buckets }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service Discovery | ${{ steps.check_remaining.outputs.Service_Discovery_namespaces }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cognito Pools | ${{ steps.check_remaining.outputs.Cognito_identity_pools }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RUM Monitors | ${{ steps.check_remaining.outputs.RUM_app_monitors }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "$REMAINING" -gt "0" ]; then
-            echo "⚠️ **$REMAINING resource group(s) may still exist.** Check the AWS Console or re-run the workflow." >> $GITHUB_STEP_SUMMARY
+          if [ "$TOTAL" = "0" ]; then
+            echo "✅ **Clean slate confirmed. All $ENV resources have been removed.**" >> $GITHUB_STEP_SUMMARY
           else
-            echo "✅ **All tracked resources appear to be cleaned up.**" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **$TOTAL resource group(s) still present. Manual cleanup may be needed for the above items.**" >> $GITHUB_STEP_SUMMARY
           fi
 
   # ─────────────────────────────────────────────
-  # 7. Clean up GitHub Actions artifacts
+  # 8. Clean up GitHub Actions artifacts
   # ─────────────────────────────────────────────
   clean-artifacts:
     name: Clean Workflow Artifacts
@@ -636,6 +1165,7 @@ jobs:
             const stale = artifacts.filter(a =>
               a.name.startsWith('tfplan') ||
               a.name.startsWith('destroy-plan') ||
+              a.name.startsWith('destroy-output') ||
               a.name.startsWith('terraform-outputs')
             );
 
