@@ -156,6 +156,10 @@ resource "aws_security_group" "monitoring_efs" {
     },
     var.tags
   )
+
+  lifecycle {
+    ignore_changes = [description]
+  }
 }
 
 # EFS for Prometheus data

@@ -178,6 +178,10 @@ resource "aws_security_group" "alb" {
     },
     var.tags
   )
+
+  lifecycle {
+    ignore_changes = [description]
+  }
 }
 
 # Security Group for ASG instances

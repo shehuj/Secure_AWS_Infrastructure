@@ -35,6 +35,7 @@ env:
   TF_VAR_acm_certificate_arn: ${{ secrets.TF_VAR_ACM_CERTIFICATE_ARN }}
   TF_VAR_grafana_certificate_arn: ${{ secrets.TF_VAR_GRAFANA_CERTIFICATE_ARN }}
   TF_VAR_grafana_domain_name: ${{ secrets.TF_VAR_GRAFANA_DOMAIN_NAME }}
+  TF_VAR_ghost_domain_name: ${{ secrets.TF_VAR_GHOST_DOMAIN_NAME }}
   # grafana_admin_password_secret_name is set in terraform.tfvars
   TF_VAR_root_volume_size: ${{ secrets.TF_VAR_ROOT_VOLUME_SIZE }}
   TF_VAR_enable_observability: ${{ secrets.TF_VAR_ENABLE_OBSERVABILITY }}
@@ -95,7 +96,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ~1.9
+          terraform_version: ~1.7
           terraform_wrapper: false
 
       - name: Terraform Init
@@ -192,6 +193,33 @@ jobs:
               --no-cli-pager 2>/dev/null || echo "  Warning: could not update $ALB_NAME"
           done
           echo "✅ ALB deletion protection disabled"
+
+      - name: Delete EFS mount targets
+        run: |
+          echo "==> Deleting EFS mount targets for environment: ${{ github.event.inputs.environment }}..."
+          ENV="${{ github.event.inputs.environment }}"
+          EFS_IDS=$(aws efs describe-file-systems \
+            --query "FileSystems[?contains(CreationToken, '${ENV}')].FileSystemId" \
+            --output text 2>/dev/null || echo "")
+          for EFS_ID in $EFS_IDS; do
+            MT_IDS=$(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
+              --query 'MountTargets[].MountTargetId' --output text 2>/dev/null || echo "")
+            for MT_ID in $MT_IDS; do
+              echo "  Deleting mount target: $MT_ID"
+              aws efs delete-mount-target --mount-target-id "$MT_ID" --no-cli-pager 2>/dev/null || true
+            done
+          done
+          # Wait for all mount targets to finish deleting
+          for EFS_ID in $EFS_IDS; do
+            echo "  Waiting for mount targets on $EFS_ID to delete..."
+            for i in $(seq 1 18); do
+              MT_COUNT=$(aws efs describe-mount-targets --file-system-id "$EFS_ID" \
+                --query 'length(MountTargets)' --output text 2>/dev/null || echo "0")
+              [ "$MT_COUNT" = "0" ] && break
+              sleep 10
+            done
+          done
+          echo "✅ EFS mount targets deleted"
 
       - name: Empty S3 buckets tagged with environment
         run: |
@@ -304,10 +332,10 @@ jobs:
               --apply-immediately \
               --no-cli-pager 2>/dev/null || echo "  Warning: could not update $DB"
           done
-          if [ -n "$DBS" ]; then
-            echo "  Waiting 15s for RDS modification to apply..."
-            sleep 15
-          fi
+          for DB in $DBS; do
+            echo "  Waiting for $DB to be available after modification..."
+            aws rds wait db-instance-available --db-instance-identifier "$DB" --no-cli-pager 2>/dev/null || true
+          done
           echo "✅ RDS deletion protection disabled"
 
       - name: Drain ASG instances
@@ -350,6 +378,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Disable prevent_destroy for teardown
+        run: |
+          sed -i 's/prevent_destroy = true/prevent_destroy = false/g' \
+            terraform/modules/vpc/main.tf
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -359,7 +392,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ~1.9
+          terraform_version: ~1.7
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -419,6 +452,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Disable prevent_destroy for teardown
+        run: |
+          sed -i 's/prevent_destroy = true/prevent_destroy = false/g' \
+            terraform/modules/vpc/main.tf
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -428,7 +466,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ~1.9
+          terraform_version: ~1.7
 
       - name: Terraform Init
         run: terraform init -input=false

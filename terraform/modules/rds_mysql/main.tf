@@ -30,6 +30,15 @@ resource "aws_db_subnet_group" "ghost" {
     },
     var.tags
   )
+
+  lifecycle {
+    # subnet_ids in a DB subnet group are bound to the VPC at creation time.
+    # AWS rejects any ModifyDBSubnetGroup that introduces subnets from a different
+    # VPC (e.g., after VPC recreation). Since RDS instances cannot change VPCs,
+    # the subnet set is effectively immutable — ignore drift to prevent failed
+    # apply attempts when state and AWS temporarily diverge after partial deploys.
+    ignore_changes = [subnet_ids]
+  }
 }
 
 # Security Group for RDS
@@ -74,7 +83,7 @@ resource "random_password" "rds_password" {
 resource "aws_secretsmanager_secret" "rds_password" {
   name                    = "${var.environment}/ghost/rds/master-password"
   description             = "Master password for Ghost RDS MySQL instance - used by Ansible for DB provisioning"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
 
   tags = merge(
     {
@@ -100,7 +109,7 @@ resource "random_password" "app_user_password" {
 resource "aws_secretsmanager_secret" "app_user_password" {
   name                    = "${var.environment}/ghost/rds/app-password"
   description             = "Ghost application user password - injected into Ghost ECS tasks"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
 
   tags = merge(
     {
