@@ -534,6 +534,13 @@ resource "aws_route53_record" "ghost" {
     zone_id                = aws_lb.ghost.zone_id
     evaluate_target_health = true
   }
+
+  lifecycle {
+    # Record is imported in the reconcile step when it pre-exists.
+    # Ignore alias target drift so re-deploys never attempt to recreate
+    # an already-existing record (Route53 rejects duplicate creates).
+    ignore_changes = [alias]
+  }
 }
 
 # Route 53 A record for www subdomain
@@ -546,6 +553,10 @@ resource "aws_route53_record" "ghost_www" {
     name                   = aws_lb.ghost.dns_name
     zone_id                = aws_lb.ghost.zone_id
     evaluate_target_health = true
+  }
+
+  lifecycle {
+    ignore_changes = [alias]
   }
 }
 
