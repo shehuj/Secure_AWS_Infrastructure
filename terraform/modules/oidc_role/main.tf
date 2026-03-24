@@ -107,38 +107,6 @@ data "aws_iam_policy_document" "terraform_compute" {
   }
 
   statement {
-    sid    = "IAMOperations"
-    effect = "Allow"
-    actions = [
-      "iam:GetRole", "iam:GetRolePolicy", "iam:CreateRole", "iam:DeleteRole",
-      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-      "iam:PutRolePolicy", "iam:DeleteRolePolicy",
-      "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListRoleTags",
-      "iam:TagRole", "iam:UntagRole",
-      "iam:GetInstanceProfile", "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
-      "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
-      "iam:TagInstanceProfile", "iam:UntagInstanceProfile", "iam:ListInstanceProfileTags",
-      "iam:ListInstanceProfiles", "iam:ListInstanceProfilesForRole",
-      "iam:PassRole",
-      "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
-      "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-      "iam:ListPolicyVersions", "iam:ListPolicies", "iam:TagPolicy", "iam:UntagPolicy",
-      "iam:GetOpenIDConnectProvider", "iam:CreateOpenIDConnectProvider",
-      "iam:DeleteOpenIDConnectProvider", "iam:ListOpenIDConnectProviders",
-      "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider",
-      "iam:ListOpenIDConnectProviderTags",
-      "iam:GetUser", "iam:CreateUser", "iam:DeleteUser",
-      "iam:TagUser", "iam:UntagUser", "iam:ListUserTags",
-      "iam:PutUserPolicy", "iam:GetUserPolicy", "iam:DeleteUserPolicy",
-      "iam:ListUserPolicies", "iam:ListAttachedUserPolicies",
-      "iam:AttachUserPolicy", "iam:DetachUserPolicy",
-      "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:ListAccessKeys",
-      "iam:UpdateAccessKey"
-    ]
-    resources = ["*"]
-  }
-
-  statement {
     sid    = "ECSOperations"
     effect = "Allow"
     actions = [
@@ -190,13 +158,51 @@ data "aws_iam_policy_document" "terraform_compute" {
       "autoscaling:SetDesiredCapacity", "autoscaling:TerminateInstanceInAutoScalingGroup",
       "autoscaling:DescribeScalingActivities", "autoscaling:DescribeAutoScalingInstances",
       "autoscaling:AttachLoadBalancerTargetGroups", "autoscaling:DetachLoadBalancerTargetGroups",
-      "autoscaling:DescribeLoadBalancerTargetGroups", "autoscaling:DescribeNotificationConfigurations"
+      "autoscaling:DescribeLoadBalancerTargetGroups", "autoscaling:DescribeNotificationConfigurations",
+      "autoscaling:EnableMetricsCollection", "autoscaling:DisableMetricsCollection",
+      "autoscaling:DescribeMetricCollectionTypes", "autoscaling:SuspendProcesses",
+      "autoscaling:ResumeProcesses"
     ]
     resources = ["*"]
   }
 }
 
-# ── Policy 2: Data & Storage ──────────────────────────────────────────────────
+# ── Policy 2: IAM ─────────────────────────────────────────────────────────────
+data "aws_iam_policy_document" "terraform_iam" {
+  statement {
+    sid    = "IAMOperations"
+    effect = "Allow"
+    actions = [
+      "iam:GetRole", "iam:GetRolePolicy", "iam:CreateRole", "iam:DeleteRole",
+      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+      "iam:PutRolePolicy", "iam:DeleteRolePolicy",
+      "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListRoleTags",
+      "iam:TagRole", "iam:UntagRole",
+      "iam:GetInstanceProfile", "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
+      "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile", "iam:UntagInstanceProfile", "iam:ListInstanceProfileTags",
+      "iam:ListInstanceProfiles", "iam:ListInstanceProfilesForRole",
+      "iam:PassRole",
+      "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
+      "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
+      "iam:ListPolicyVersions", "iam:ListPolicies", "iam:TagPolicy", "iam:UntagPolicy",
+      "iam:GetOpenIDConnectProvider", "iam:CreateOpenIDConnectProvider",
+      "iam:DeleteOpenIDConnectProvider", "iam:ListOpenIDConnectProviders",
+      "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviderTags",
+      "iam:GetUser", "iam:CreateUser", "iam:DeleteUser",
+      "iam:TagUser", "iam:UntagUser", "iam:ListUserTags",
+      "iam:PutUserPolicy", "iam:GetUserPolicy", "iam:DeleteUserPolicy",
+      "iam:ListUserPolicies", "iam:ListAttachedUserPolicies",
+      "iam:AttachUserPolicy", "iam:DetachUserPolicy",
+      "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:ListAccessKeys",
+      "iam:UpdateAccessKey"
+    ]
+    resources = ["*"]
+  }
+}
+
+# ── Policy 4: Data & Storage ──────────────────────────────────────────────────
 data "aws_iam_policy_document" "terraform_data" {
   statement {
     sid    = "SecretsManagerOperations"
@@ -315,7 +321,7 @@ data "aws_iam_policy_document" "terraform_data" {
   }
 }
 
-# ── Policy 3: Monitoring & Platform ──────────────────────────────────────────
+# ── Policy 5: Monitoring & Platform ──────────────────────────────────────────
 data "aws_iam_policy_document" "terraform_monitoring" {
   statement {
     sid    = "CloudWatchLogsOperations"
@@ -397,6 +403,12 @@ resource "aws_iam_policy" "terraform_compute" {
   policy      = data.aws_iam_policy_document.terraform_compute.json
 }
 
+resource "aws_iam_policy" "terraform_iam" {
+  name        = "${var.role_name}-IAM"
+  description = "GitHub Actions Terraform — IAM permissions"
+  policy      = data.aws_iam_policy_document.terraform_iam.json
+}
+
 resource "aws_iam_policy" "terraform_data" {
   name        = "${var.role_name}-Data"
   description = "GitHub Actions Terraform — data & storage permissions"
@@ -412,6 +424,11 @@ resource "aws_iam_policy" "terraform_monitoring" {
 resource "aws_iam_role_policy_attachment" "terraform_compute" {
   role       = aws_iam_role.github_actions.name
   policy_arn = aws_iam_policy.terraform_compute.arn
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_iam" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = aws_iam_policy.terraform_iam.arn
 }
 
 resource "aws_iam_role_policy_attachment" "terraform_data" {

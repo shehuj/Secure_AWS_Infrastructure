@@ -528,30 +528,36 @@ jobs:
           done
 
           echo "=== RDS ==="
-          # If the DB subnet group exists but its subnets belong to a different VPC
-          # (e.g. after VPC recreation), delete it so Terraform recreates it with the
-          # correct subnets. This is safe when no RDS instance exists yet.
           SG_SUBNET_VPC=$(aws rds describe-db-subnet-groups \
             --db-subnet-group-name "prod-ghost-db-subnet-group" \
             --query 'DBSubnetGroups[0].VpcId' --output text 2>/dev/null || echo "")
-          if [ -n "$SG_SUBNET_VPC" ] && [ "$SG_SUBNET_VPC" != "None" ] && [ "$SG_SUBNET_VPC" != "$VPC_ID" ]; then
-            echo "DB subnet group VPC ($SG_SUBNET_VPC) != current VPC ($VPC_ID) — deleting stale subnet group"
-            RDS_INST_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
-              --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
-            if [ -z "$RDS_INST_EXISTS" ] || [ "$RDS_INST_EXISTS" = "None" ]; then
-              aws rds delete-db-subnet-group --db-subnet-group-name "prod-ghost-db-subnet-group" 2>/dev/null || true
-              terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+          if [ -n "$SG_SUBNET_VPC" ] && [ "$SG_SUBNET_VPC" != "None" ]; then
+            if [ "$SG_SUBNET_VPC" != "$VPC_ID" ]; then
+              # Subnet group belongs to an old VPC — delete it so Terraform recreates with correct subnets
+              echo "DB subnet group VPC ($SG_SUBNET_VPC) != current VPC ($VPC_ID) — deleting stale subnet group"
+              RDS_INST_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
+                --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
+              if [ -z "$RDS_INST_EXISTS" ] || [ "$RDS_INST_EXISTS" = "None" ]; then
+                aws rds delete-db-subnet-group --db-subnet-group-name "prod-ghost-db-subnet-group" 2>/dev/null || true
+                terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+              else
+                echo "WARN: RDS instance exists — cannot delete subnet group; import as-is"
+                terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
+                tf_import "module.ghost_db.aws_db_subnet_group.ghost" "prod-ghost-db-subnet-group"
+              fi
             else
-              echo "WARN: RDS instance exists — cannot delete subnet group; import as-is"
+              # Subnet group exists and belongs to the correct VPC — force-reimport to sync state
               terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
               tf_import "module.ghost_db.aws_db_subnet_group.ghost" "prod-ghost-db-subnet-group"
             fi
-          else
-            # Subnet group exists and belongs to the correct VPC — force-reimport to sync state
-            terraform state rm "module.ghost_db.aws_db_subnet_group.ghost" 2>/dev/null || true
-            tf_import "module.ghost_db.aws_db_subnet_group.ghost" "prod-ghost-db-subnet-group"
           fi
-          tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
+          # Parameter group: only import if it exists
+          PG_EXISTS=$(aws rds describe-db-parameter-groups \
+            --db-parameter-group-name "prod-ghost-mysql-params" \
+            --query 'DBParameterGroups[0].DBParameterGroupName' --output text 2>/dev/null || echo "")
+          if [ -n "$PG_EXISTS" ] && [ "$PG_EXISTS" != "None" ]; then
+            tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
+          fi
           RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
             --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
           if [ -n "$RDS_EXISTS" ] && [ "$RDS_EXISTS" != "None" ]; then
@@ -666,7 +672,12 @@ jobs:
               --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || echo "")
             if [ -n "$PUBLIC_RT" ] && [ "$PUBLIC_RT" != "None" ]; then
               tf_import "module.vpc.aws_route_table.public" "$PUBLIC_RT"
-              tf_import "module.vpc.aws_route.public_internet" "${PUBLIC_RT}_0.0.0.0/0"
+              ROUTE_EXISTS=$(aws ec2 describe-route-tables --route-table-ids "$PUBLIC_RT" \
+                --query "RouteTables[0].Routes[?DestinationCidrBlock=='0.0.0.0/0'].DestinationCidrBlock" \
+                --output text 2>/dev/null || echo "")
+              if [ -n "$ROUTE_EXISTS" ] && [ "$ROUTE_EXISTS" != "None" ]; then
+                tf_import "module.vpc.aws_route.public_internet" "${PUBLIC_RT}_0.0.0.0/0"
+              fi
               IDX=0
               for SN_ID in $(aws ec2 describe-subnets \
                 --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
@@ -683,7 +694,12 @@ jobs:
               --query 'sort_by(RouteTables,&Tags[?Key==`Name`].Value|[0])[].RouteTableId' \
               --output text 2>/dev/null); do
               tf_import "module.vpc.aws_route_table.private[$IDX]" "$PVT_RT"
-              tf_import "module.vpc.aws_route.private_nat[$IDX]" "${PVT_RT}_0.0.0.0/0"
+              NAT_ROUTE_EXISTS=$(aws ec2 describe-route-tables --route-table-ids "$PVT_RT" \
+                --query "RouteTables[0].Routes[?DestinationCidrBlock=='0.0.0.0/0'].DestinationCidrBlock" \
+                --output text 2>/dev/null || echo "")
+              if [ -n "$NAT_ROUTE_EXISTS" ] && [ "$NAT_ROUTE_EXISTS" != "None" ]; then
+                tf_import "module.vpc.aws_route.private_nat[$IDX]" "${PVT_RT}_0.0.0.0/0"
+              fi
               IDX=$((IDX+1))
             done
             IDX=0
