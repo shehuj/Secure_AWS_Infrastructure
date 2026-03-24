@@ -190,7 +190,10 @@ data "aws_iam_policy_document" "terraform_compute" {
       "autoscaling:SetDesiredCapacity", "autoscaling:TerminateInstanceInAutoScalingGroup",
       "autoscaling:DescribeScalingActivities", "autoscaling:DescribeAutoScalingInstances",
       "autoscaling:AttachLoadBalancerTargetGroups", "autoscaling:DetachLoadBalancerTargetGroups",
-      "autoscaling:DescribeLoadBalancerTargetGroups", "autoscaling:DescribeNotificationConfigurations"
+      "autoscaling:DescribeLoadBalancerTargetGroups", "autoscaling:DescribeNotificationConfigurations",
+      "autoscaling:EnableMetricsCollection", "autoscaling:DisableMetricsCollection",
+      "autoscaling:DescribeMetricCollectionTypes", "autoscaling:SuspendProcesses",
+      "autoscaling:ResumeProcesses"
     ]
     resources = ["*"]
   }

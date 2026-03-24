@@ -76,7 +76,8 @@ module "ghost_db" {
   multi_az                    = var.db_multi_az
   deletion_protection         = true
   final_snapshot_enabled      = true
-  enable_performance_insights = true
+  # Performance Insights requires db.t3.medium or larger; not supported on db.t3.micro
+  enable_performance_insights = false
   monitoring_interval         = 60
 
   tags = var.tags
