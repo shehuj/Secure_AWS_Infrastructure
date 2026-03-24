@@ -623,11 +623,18 @@ jobs:
                 --query "ResourceRecordSets[?Name=='${RECORD_NAME}.'].Name" \
                 --output text 2>/dev/null || echo "")
               if [ -n "$R53_EXISTS" ] && [ "$R53_EXISTS" != "None" ]; then
+                # Force-reimport: stale state triggers a fresh create which fails with
+                # "already exists". State rm + import ensures the record is always in
+                # state before apply so Terraform plans an update, never a create.
                 case "$RECORD_NAME" in
-                  www.*) tf_import "module.ghost_blog.aws_route53_record.ghost_www" \
-                           "${ZONE_ID}_${RECORD_NAME}_A" ;;
-                  *)     tf_import "module.ghost_blog.aws_route53_record.ghost" \
-                           "${ZONE_ID}_${RECORD_NAME}_A" ;;
+                  www.*)
+                    terraform state rm "module.ghost_blog.aws_route53_record.ghost_www" 2>/dev/null || true
+                    tf_import "module.ghost_blog.aws_route53_record.ghost_www" \
+                      "${ZONE_ID}_${RECORD_NAME}_A" ;;
+                  *)
+                    terraform state rm "module.ghost_blog.aws_route53_record.ghost" 2>/dev/null || true
+                    tf_import "module.ghost_blog.aws_route53_record.ghost" \
+                      "${ZONE_ID}_${RECORD_NAME}_A" ;;
                 esac
               fi
             done
