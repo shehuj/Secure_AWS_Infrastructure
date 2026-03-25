@@ -86,7 +86,7 @@ DB setup and webserver deploy run in parallel after Terraform completes.
 | `rds_mysql` | Always | Managed MySQL on private subnets — provisioned by Terraform, configured by Ansible |
 | `monitoring` | Always | CloudWatch dashboards, alarms, SNS |
 | `oidc_role` | Always | GitHub OIDC provider for keyless CI/CD |
-| `observability` | Optional | Prometheus + Grafana on ECS Fargate (`enable_observability = true`) |
+| `observability` | Optional | Prometheus + Grafana + CloudWatch Exporter on ECS Fargate (`enable_observability = true`) |
 | `user_analytics` | Optional | CloudWatch RUM + Lambda analytics (`enable_user_analytics = true`) |
 | `ecs_bluegreen` | Available | Zero-downtime blue-green deployments via CodeDeploy |
 | `elasticache_redis` | Available | ElastiCache Redis cluster |
@@ -197,10 +197,43 @@ ansible-playbook playbooks/webserver.yml -i inventory/aws_ec2.yml
 
 | Variable | Default | Description |
 |---|---|---|
-| `enable_observability` | `false` | Deploy Prometheus + Grafana |
+| `enable_observability` | `false` | Deploy Prometheus + Grafana + CloudWatch Exporter |
 | `grafana_domain_name` | — | Grafana domain |
 | `grafana_admin_password` | — | Grafana password (sensitive) |
-| `prometheus_retention_days` | `15` | Prometheus retention days |
+| `prometheus_retention_days` | `15` | Prometheus data retention days |
+
+#### Observability Stack
+
+When `enable_observability = true`, the following services are deployed on ECS Fargate:
+
+| Service | Port | Description |
+|---|---|---|
+| Prometheus | 9090 | Metrics collection and storage (EFS-backed, configurable retention) |
+| Grafana | 3000 | Dashboards and alerting (HTTPS via ACM cert) |
+| CloudWatch Exporter | 9106 | Sidecar in the Prometheus task — bridges AWS CloudWatch to Prometheus |
+| Node Exporter | 9100 | Container-level CPU, memory, and network metrics |
+| MySQL Exporter | 9104 | RDS MySQL metrics (connections, query latency, InnoDB stats) |
+
+**CloudWatch Exporter** runs as a sidecar alongside Prometheus (shared `localhost` network) and scrapes the following AWS namespaces every 15–60 seconds:
+
+| Namespace | Metrics |
+|---|---|
+| `AWS/ECS` | CPUUtilization, MemoryUtilization (per service) |
+| `AWS/ApplicationELB` | RequestCount, TargetResponseTime, 4xx/5xx, HealthyHostCount, ActiveConnections, ProcessedBytes |
+| `AWS/RDS` | CPU, FreeStorageSpace, FreeableMemory, Connections, Read/Write Latency, IOPS, Network throughput |
+| `AWS/EC2` + `AWS/AutoScaling` | CPU, NetworkIn/Out, StatusCheckFailed, InServiceInstances, DesiredCapacity |
+| `AWS/EFS` | BurstCreditBalance, PercentIOLimit, DataRead/WriteIOBytes, ClientConnections |
+| `AWS/NATGateway` | BytesIn/Out, PacketsDropCount, ErrorPortAllocation |
+
+All CloudWatch metrics are available in Grafana as `aws_*` Prometheus metrics alongside the native ECS service metrics.
+
+**Architecture:**
+```
+Grafana (3000) ──→ Prometheus (9090) ──→ ECS SD: node-exporter (9100)
+                        │           ──→ ECS SD: mysql-exporter (9104)
+                        │           ──→ ECS SD: ghost probe (2368)
+                        └──→ localhost: cloudwatch-exporter (9106) ──→ AWS CloudWatch API
+```
 
 ---
 
