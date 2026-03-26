@@ -527,7 +527,8 @@ jobs:
             "/aws/vpc/${ENV}" \
             "/aws/rum/${ENV}" \
             "/aws/analytics/${ENV}" \
-            "/aws/apigateway/${ENV}"; do
+            "/aws/apigateway/${ENV}" \
+            "/aws/rds/instance/${ENV}"; do
             LGS=$(aws logs describe-log-groups \
               --log-group-name-prefix "$PREFIX" \
               --query "logGroups[].logGroupName" --output text 2>/dev/null || echo "")
@@ -560,6 +561,107 @@ jobs:
               --no-cli-pager 2>/dev/null || true
           done
           echo "✅ CloudWatch alarms and dashboards deleted"
+
+      - name: Delete SNS topics
+        run: |
+          echo "==> Deleting SNS topics..."
+          ENV="${{ github.event.inputs.environment }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ env.AWS_REGION }}"
+          TOPICS=$(aws sns list-topics \
+            --query "Topics[?contains(TopicArn, ':${ENV}-')].TopicArn" \
+            --output text 2>/dev/null || echo "")
+          for TOPIC_ARN in $TOPICS; do
+            TOPIC_NAME=$(echo "$TOPIC_ARN" | awk -F: '{print $NF}')
+            echo "  Deleting SNS topic: $TOPIC_NAME"
+            aws sns delete-topic --topic-arn "$TOPIC_ARN" --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ SNS topics deleted"
+
+      - name: Delete RDS automated backups and manual snapshots
+        run: |
+          echo "==> Deleting RDS snapshots and automated backups..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Delete manual snapshots
+          for SNAP in $(aws rds describe-db-snapshots \
+            --snapshot-type manual \
+            --query "DBSnapshots[?contains(DBInstanceIdentifier, '${ENV}')].DBSnapshotIdentifier" \
+            --output text 2>/dev/null); do
+            echo "  Deleting manual snapshot: $SNAP"
+            aws rds delete-db-snapshot --db-snapshot-identifier "$SNAP" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          # Delete automated backups (billed until explicitly removed)
+          for BACKUP in $(aws rds describe-db-instance-automated-backups \
+            --query "DBInstanceAutomatedBackups[?contains(DBInstanceIdentifier, '${ENV}')].DbiResourceId" \
+            --output text 2>/dev/null); do
+            DB_SNAP=$(aws rds describe-db-instance-automated-backups \
+              --filters "Name=dbi-resource-id,Values=$BACKUP" \
+              --query "DBInstanceAutomatedBackups[0].DBInstanceIdentifier" \
+              --output text 2>/dev/null || echo "")
+            echo "  Deleting automated backup for: $DB_SNAP ($BACKUP)"
+            aws rds delete-db-instance-automated-backup \
+              --dbi-resource-id "$BACKUP" \
+              --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ RDS snapshots and automated backups deleted"
+
+      - name: Terminate remaining EC2 instances and delete EBS volumes
+        run: |
+          echo "==> Terminating remaining EC2 instances..."
+          ENV="${{ github.event.inputs.environment }}"
+          # Terminate any instances tagged for this environment
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query "Reservations[].Instances[].InstanceId" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$INSTANCE_IDS" ]; then
+            echo "  Terminating instances: $INSTANCE_IDS"
+            aws ec2 terminate-instances --instance-ids $INSTANCE_IDS \
+              --no-cli-pager 2>/dev/null || true
+            echo "  Waiting for instances to terminate..."
+            aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS \
+              --no-cli-pager 2>/dev/null || true
+          fi
+          # Delete unattached EBS volumes tagged for this environment
+          for VOL in $(aws ec2 describe-volumes \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+                      "Name=status,Values=available" \
+            --query "Volumes[].VolumeId" --output text 2>/dev/null); do
+            echo "  Deleting unattached EBS volume: $VOL"
+            aws ec2 delete-volume --volume-id "$VOL" --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ EC2 instances terminated and orphaned EBS volumes deleted"
+
+      - name: Delete Route53 DNS records
+        run: |
+          echo "==> Deleting Route53 DNS records..."
+          ZONE_ID="${{ env.TF_VAR_route53_zone_id }}"
+          GHOST_DOMAIN="${{ env.TF_VAR_ghost_domain_name }}"
+          if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "None" ]; then
+            echo "  ZONE_ID not set — skipping Route53 cleanup"
+          else
+            for RECORD_NAME in "$GHOST_DOMAIN" "www.${GHOST_DOMAIN}"; do
+              [ -z "$RECORD_NAME" ] && continue
+              RECORD_SET=$(aws route53 list-resource-record-sets \
+                --hosted-zone-id "$ZONE_ID" \
+                --query "ResourceRecordSets[?Name=='${RECORD_NAME}.']" \
+                --output json 2>/dev/null || echo "[]")
+              if echo "$RECORD_SET" | grep -q '"Name"'; then
+                echo "  Deleting Route53 record: $RECORD_NAME"
+                aws route53 change-resource-record-sets \
+                  --hosted-zone-id "$ZONE_ID" \
+                  --change-batch "{
+                    \"Changes\": [{
+                      \"Action\": \"DELETE\",
+                      \"ResourceRecordSet\": $(echo "$RECORD_SET" | python3 -c 'import json,sys; rs=json.load(sys.stdin); print(json.dumps(rs[0]))' 2>/dev/null || echo 'null')
+                    }]
+                  }" --no-cli-pager 2>/dev/null || true
+              fi
+            done
+          fi
+          echo "✅ Route53 records cleaned up"
 
       - name: Delete ECS task definitions (deregister + delete INACTIVE)
         run: |
@@ -805,7 +907,32 @@ jobs:
             aws iam delete-policy --policy-arn "$POLICY_ARN" \
               --no-cli-pager 2>/dev/null || true
           done
-          echo "✅ IAM roles and policies deleted"
+          # Delete IAM users tagged for this environment (e.g. bootstrap user)
+          for USER in $(aws iam list-users \
+            --query "Users[?contains(UserName, '${ENV}')].UserName" \
+            --output text 2>/dev/null); do
+            # Delete access keys
+            for KEY in $(aws iam list-access-keys --user-name "$USER" \
+              --query "AccessKeyMetadata[].AccessKeyId" --output text 2>/dev/null); do
+              aws iam delete-access-key --user-name "$USER" --access-key-id "$KEY" \
+                2>/dev/null || true
+            done
+            # Delete inline user policies
+            for POLICY_NAME in $(aws iam list-user-policies --user-name "$USER" \
+              --query "PolicyNames[]" --output text 2>/dev/null); do
+              aws iam delete-user-policy --user-name "$USER" \
+                --policy-name "$POLICY_NAME" 2>/dev/null || true
+            done
+            # Detach managed user policies
+            for POLICY_ARN in $(aws iam list-attached-user-policies --user-name "$USER" \
+              --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null); do
+              aws iam detach-user-policy --user-name "$USER" \
+                --policy-arn "$POLICY_ARN" 2>/dev/null || true
+            done
+            echo "  Deleting IAM user: $USER"
+            aws iam delete-user --user-name "$USER" --no-cli-pager 2>/dev/null || true
+          done
+          echo "✅ IAM roles, policies, and users deleted"
 
       - name: Delete remaining ASGs and launch templates
         run: |
@@ -1095,6 +1222,33 @@ jobs:
             --query "length(AppMonitorSummaries[?contains(Name, '${ENV}')])" \
             --output text 2>/dev/null || echo 0)"
 
+          count_resources "EC2 instances" "$(aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query "length(Reservations[].Instances[])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "EBS volumes" "$(aws ec2 describe-volumes \
+            --filters "Name=tag:Environment,Values=${ENV}" "Name=status,Values=available" \
+            --query "length(Volumes)" --output text 2>/dev/null || echo 0)"
+
+          count_resources "RDS snapshots" "$(aws rds describe-db-snapshots \
+            --snapshot-type manual \
+            --query "length(DBSnapshots[?contains(DBInstanceIdentifier, '${ENV}')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "SNS topics" "$(aws sns list-topics \
+            --query "length(Topics[?contains(TopicArn, ':${ENV}-')])" \
+            --output text 2>/dev/null || echo 0)"
+
+          count_resources "NAT gateways" "$(aws ec2 describe-nat-gateways \
+            --filter "Name=tag:Environment,Values=${ENV}" "Name=state,Values=available,pending" \
+            --query "length(NatGateways)" --output text 2>/dev/null || echo 0)"
+
+          count_resources "Elastic IPs" "$(aws ec2 describe-addresses \
+            --filters "Name=tag:Environment,Values=${ENV}" \
+            --query "length(Addresses)" --output text 2>/dev/null || echo 0)"
+
           echo "total=$TOTAL" >> $GITHUB_OUTPUT
 
       - name: Write final summary
@@ -1133,6 +1287,12 @@ jobs:
           echo "| Service Discovery | ${{ steps.check_remaining.outputs.Service_Discovery_namespaces }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Cognito Pools | ${{ steps.check_remaining.outputs.Cognito_identity_pools }} |" >> $GITHUB_STEP_SUMMARY
           echo "| RUM Monitors | ${{ steps.check_remaining.outputs.RUM_app_monitors }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EC2 Instances | ${{ steps.check_remaining.outputs.EC2_instances }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EBS Volumes | ${{ steps.check_remaining.outputs.EBS_volumes }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS Snapshots | ${{ steps.check_remaining.outputs.RDS_snapshots }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SNS Topics | ${{ steps.check_remaining.outputs.SNS_topics }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| NAT Gateways | ${{ steps.check_remaining.outputs.NAT_gateways }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Elastic IPs | ${{ steps.check_remaining.outputs.Elastic_IPs }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "$TOTAL" = "0" ]; then
             echo "✅ **Clean slate confirmed. All $ENV resources have been removed.**" >> $GITHUB_STEP_SUMMARY
