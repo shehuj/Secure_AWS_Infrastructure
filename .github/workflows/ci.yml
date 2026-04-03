@@ -116,13 +116,13 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        run: terraform init -input=false
+        run: terraform init -input=false -lock=false
 
       - name: Terraform Plan
         id: plan
         run: |
           set +e
-          terraform plan -input=false -out=tfplan -detailed-exitcode -lock-timeout=5m 2>&1 | tee plan.txt
+          terraform plan -input=false -out=tfplan -detailed-exitcode -lock-timeout=5m -lock=false 2>&1 | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
           set -e
           exit 0
