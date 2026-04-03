@@ -967,7 +967,7 @@ jobs:
             _reimport_cw "module.ghost_blog.aws_cloudwatch_log_group.ghost"     "/ecs/prod/ghost"
 
             terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m -lock=false
-            terraform apply -input=false -lock-timeout=5m tfplan-fresh -lock=false
+            terraform apply -input=false -lock-timeout=5m -lock=false tfplan-fresh
           fi
 
       - name: Capture outputs
