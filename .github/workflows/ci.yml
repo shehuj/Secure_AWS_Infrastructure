@@ -116,7 +116,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        run: terraform init -input=false -lock=false
+        run: terraform init -input=false
 
       - name: Terraform Plan
         id: plan
