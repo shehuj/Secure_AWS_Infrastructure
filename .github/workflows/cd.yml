@@ -567,9 +567,12 @@ jobs:
           if [ -n "$PG_EXISTS" ] && [ "$PG_EXISTS" != "None" ]; then
             tf_import "module.ghost_db.aws_db_parameter_group.ghost" "prod-ghost-mysql-params"
           fi
+          # Force-reimport RDS instance every run: stale state causes Terraform to plan a
+          # replacement, which destroys and recreates the DB (7+ min, data-destructive).
           RDS_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "prod-ghost-db" \
             --query 'DBInstances[0].DBInstanceIdentifier' --output text 2>/dev/null || echo "")
           if [ -n "$RDS_EXISTS" ] && [ "$RDS_EXISTS" != "None" ]; then
+            terraform state rm "module.ghost_db.aws_db_instance.ghost" 2>/dev/null || true
             tf_import "module.ghost_db.aws_db_instance.ghost" "prod-ghost-db"
           fi
 
