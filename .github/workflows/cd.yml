@@ -966,6 +966,24 @@ jobs:
             _reimport_cw "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]" "/aws/vpc/prod-flow-logs"
             _reimport_cw "module.ghost_blog.aws_cloudwatch_log_group.ghost"     "/ecs/prod/ghost"
 
+            # Re-import Route53 records: a failed apply leaves them absent from state,
+            # causing the fresh plan to schedule a create which fails with "already exists".
+            ZONE_ID="${TF_VAR_route53_zone_id}"
+            GHOST_DOMAIN="${TF_VAR_ghost_domain_name}"
+            if [ -n "$ZONE_ID" ] && [ -n "$GHOST_DOMAIN" ]; then
+              for _PAIR in "${GHOST_DOMAIN}:module.ghost_blog.aws_route53_record.ghost" \
+                           "www.${GHOST_DOMAIN}:module.ghost_blog.aws_route53_record.ghost_www"; do
+                _REC="${_PAIR%%:*}"; _ADDR="${_PAIR##*:}"
+                _R53_EXISTS=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+                  --query "ResourceRecordSets[?Name=='${_REC}.'].Name" \
+                  --output text 2>/dev/null || echo "")
+                if [ -n "$_R53_EXISTS" ] && [ "$_R53_EXISTS" != "None" ]; then
+                  terraform state rm "$_ADDR" 2>/dev/null || true
+                  terraform import "$_ADDR" "${ZONE_ID}_${_REC}_A" 2>&1 || true
+                fi
+              done
+            fi
+
             terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m -lock=false
             terraform apply -input=false -lock-timeout=5m -lock=false tfplan-fresh
           fi
