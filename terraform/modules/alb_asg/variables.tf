@@ -51,7 +51,7 @@ variable "health_check_path" {
 variable "enable_deletion_protection" {
   description = "Enable deletion protection on the ALB"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_stickiness" {
