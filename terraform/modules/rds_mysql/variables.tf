@@ -113,7 +113,7 @@ variable "monitoring_interval" {
 variable "deletion_protection" {
   description = "Enable deletion protection"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "final_snapshot_enabled" {
