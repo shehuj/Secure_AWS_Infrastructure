@@ -27,7 +27,7 @@ variable "github_repo" {
 variable "terraform_state_bucket" {
   description = "S3 bucket name for Terraform state"
   type        = string
-  default     = "ec2-shutdown-lambda-bucket"
+  default     = "batbucket31"
 }
 
 variable "terraform_lock_table" {
