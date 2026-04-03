@@ -89,6 +89,7 @@ module "ghost_blog" {
 
   vpc_id                     = module.vpc.vpc_id
   subnet_ids                 = module.vpc.public_subnet_ids
+  subnet_count               = var.public_subnet_count
   environment                = var.environment
   ghost_domain               = var.ghost_domain_name
   certificate_arn            = var.acm_certificate_arn
