@@ -1,4 +1,4 @@
-# Secure AWS Infrastructure
+# Secure AWS Infrastructure.
 
 Production-ready AWS infrastructure using Terraform, Ansible, and GitHub Actions. Deploys a secure, multi-AZ environment with a Ghost blog on ECS Fargate backed by RDS MySQL, an ALB-backed Auto Scaling Group, optional Prometheus/Grafana observability, and keyless GitHub OIDC authentication.
 
