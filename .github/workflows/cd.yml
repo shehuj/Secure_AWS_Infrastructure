@@ -870,7 +870,7 @@ jobs:
           echo "=== Reconcile complete ==="
 
       - name: Terraform Plan
-        run: terraform plan -input=false -out=tfplan -lock-timeout=5m
+        run: terraform plan -input=false -out=tfplan -lock-timeout=5m -lock=false
 
       - name: Terraform Apply
         run: |
@@ -954,8 +954,8 @@ jobs:
             _reimport_cw "module.vpc.aws_cloudwatch_log_group.vpc_flow_logs[0]" "/aws/vpc/prod-flow-logs"
             _reimport_cw "module.ghost_blog.aws_cloudwatch_log_group.ghost"     "/ecs/prod/ghost"
 
-            terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m
-            terraform apply -input=false -lock-timeout=5m tfplan-fresh
+            terraform plan -input=false -out=tfplan-fresh -lock-timeout=5m -lock=false
+            terraform apply -input=false -lock-timeout=5m tfplan-fresh -lock=false
           fi
 
       - name: Capture outputs
