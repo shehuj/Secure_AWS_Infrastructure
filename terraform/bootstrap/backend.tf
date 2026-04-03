@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket         = "ec2-shutdown-lambda-bucket"
+    bucket         = "bathbucket31"
     key            = "bootstrap/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "dyning_table"
