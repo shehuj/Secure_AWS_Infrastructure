@@ -615,7 +615,7 @@ resource "aws_efs_file_system" "ghost" {
 
 # EFS Mount Targets (one per subnet for high availability)
 resource "aws_efs_mount_target" "ghost" {
-  count           = length(var.subnet_ids)
+  count           = var.subnet_count
   file_system_id  = aws_efs_file_system.ghost.id
   subnet_id       = var.subnet_ids[count.index]
   security_groups = [aws_security_group.ghost_efs.id]

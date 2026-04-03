@@ -8,6 +8,11 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
+variable "subnet_count" {
+  description = "Number of subnets (must be a static value known at plan time, used for EFS mount target count)"
+  type        = number
+}
+
 variable "environment" {
   description = "Environment name (e.g., prod, staging, dev)"
   type        = string
