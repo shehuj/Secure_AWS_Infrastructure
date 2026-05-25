@@ -499,6 +499,20 @@ resource "aws_iam_user_policy" "bootstrap" {
         Resource = "*"
       },
       {
+        # Terraform refreshes aws_iam_user.bootstrap state on every plan/apply,
+        # which requires the bootstrap user to be able to read its own attributes.
+        Sid    = "SelfRead"
+        Effect = "Allow"
+        Action = [
+          "iam:GetUser",
+          "iam:GetUserPolicy",
+          "iam:ListUserPolicies",
+          "iam:ListAttachedUserPolicies",
+          "iam:ListUserTags"
+        ]
+        Resource = "arn:aws:iam::*:user/*-bootstrap"
+      },
+      {
         Sid    = "S3StateLock"
         Effect = "Allow"
         Action = [
