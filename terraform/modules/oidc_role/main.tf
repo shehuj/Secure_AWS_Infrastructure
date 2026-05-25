@@ -499,6 +499,26 @@ resource "aws_iam_user_policy" "bootstrap" {
         Resource = "*"
       },
       {
+        # Terraform refreshes aws_iam_user.bootstrap state on every plan/apply
+        # (iam:GetUser, GetUserPolicy, ListUserPolicies) and must be able to
+        # update/replace the inline policy on apply (iam:PutUserPolicy).
+        # Scoped to *-bootstrap users only (least-privilege).
+        Sid    = "SelfManage"
+        Effect = "Allow"
+        Action = [
+          "iam:GetUser",
+          "iam:GetUserPolicy",
+          "iam:PutUserPolicy",
+          "iam:DeleteUserPolicy",
+          "iam:ListUserPolicies",
+          "iam:ListAttachedUserPolicies",
+          "iam:ListUserTags",
+          "iam:TagUser",
+          "iam:UntagUser"
+        ]
+        Resource = "arn:aws:iam::*:user/*-bootstrap"
+      },
+      {
         Sid    = "S3StateLock"
         Effect = "Allow"
         Action = [
