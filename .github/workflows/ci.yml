@@ -142,12 +142,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve TruffleHog scan range
+        id: scan_range
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          HEAD="${{ github.event.pull_request.head.sha || github.event.after }}"
+
+          # On first push to a branch github.event.before is all zeros.
+          # When base == head there is no diff — fall back to the previous commit.
+          ZEROS="0000000000000000000000000000000000000000"
+          if [ "$BASE" = "$ZEROS" ] || [ "$BASE" = "$HEAD" ]; then
+            BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+          fi
+
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "Scanning $BASE → $HEAD"
+
       - name: Secret scan (TruffleHog)
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.pull_request.base.sha || github.event.before }}
-          head: ${{ github.event.pull_request.head.sha || github.event.after }}
+          base: ${{ steps.scan_range.outputs.base }}
+          head: ${{ steps.scan_range.outputs.head }}
           extra_args: --only-verified
 
       - name: Terraform security (Checkov)
